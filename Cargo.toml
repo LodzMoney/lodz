@@ -1,0 +1,96 @@
+[workspace]
+members = ["programs/*"]
+resolver = "2"
+
+[profile.release]
+# Required by Anchor CLI 0.31: the build fails without overflow checks on. It
+# is also what makes the `checked_*` discipline in this program meaningful --
+# without it a release build would wrap silently on any arithmetic that was not
+# written with an explicit checked call. Never turn this off to save bytes.
+overflow-checks = true
+
+# Optimize for size, not speed.
+#
+# Measured, not assumed. Program rent on Solana is paid per byte of the
+# deployed binary and this program is 90 % `.text`, so the profile is the
+# largest single lever available. Full numbers are in README.md under
+# "Deployment cost":
+#
+#   opt-level = 3 (cargo default)                679,728 bytes
+#   opt-level = "s"                              581,856 bytes   -14.4 %
+#   opt-level = "z"                              542,912 bytes   -20.1 %
+#   opt-level = "z" + the package overrides      542,304 bytes   -20.2 %
+#     at the end of this file
+#   ... + strip and panic below                  541,632 bytes   -20.3 %  <- this
+opt-level = "z"
+
+# Cross-crate inlining and a single codegen unit both matter more at opt-level
+# "z" than at 3, because there is less inlining happening inside each unit.
+lto = "fat"
+codegen-units = 1
+
+# These two only pay off together, and that is not a guess -- it was measured
+# three ways against the configuration above (542,304 bytes), twice each from a
+# clean `target/`, and it reproduces exactly:
+#
+#   + strip = true      only     547,536 bytes    +5,232
+#   + panic = "abort"   only     545,400 bytes    +3,096
+#   + both                       541,632 bytes      -672   <- this
+#
+# Each one alone makes the binary *bigger*; the pair makes it smaller.
+#
+# Deleting BOTH was also measured, from a clean `target/`: 542,304 bytes, i.e.
+# 672 bytes larger than keeping them. So all four combinations are known and
+# the pair below is the smallest. Do not "simplify" this by removing one line
+# or both -- every other combination costs bytes.
+#
+# `strip = true` was verified not to remove anything the loader needs: the
+# stripped ELF still carries .dynamic, .dynsym, .dynstr and .rel.dyn at
+# byte-identical sizes to the unstripped build, keeps a valid entrypoint, and
+# still contains all 41 instruction/account/event discriminators.
+#
+# Beware of quoting these deltas out of context: the isolated effect of both
+# flags depends on everything above them. Measured at plain opt-level 3 with no
+# package overrides, `strip = true` changed the size by exactly 0 bytes
+# (cargo-build-sbf already emits no symbol table) and `panic = "abort"` saved
+# only 160. Those older numbers do not describe this configuration. Re-measure
+# after any change to opt-level, lto or the package overrides.
+strip = true
+panic = "abort"
+
+[profile.release.build-override]
+# Build scripts and proc macros run on the host and are not part of the
+# deployed binary, so they are optimized for speed instead.
+opt-level = 3
+incremental = false
+codegen-units = 1
+
+# Two transitive dependencies are pinned back to opt-level 3, and this is not a
+# performance tweak -- it is a correctness fix.
+#
+# At opt-level "z" the SBF backend stops inlining away the generic
+# `crypto_common::hazmat::SerializableState` impls for large arrays
+# (`[u16; 4096]`, `[u64; 1024]`, ...) and `hybrid_array::try_from_fn`, and emits
+# them as standalone functions with stack frames of up to 8,384 bytes. The SBF
+# stack frame limit is 4,096, so the build printed 16 diagnostics of the form
+#
+#   Stack offset of 8320 exceeded max offset of 4096 ... may cause undefined
+#   behavior during execution
+#
+# None of those functions is called by this program, but "believed unreachable"
+# is not a property worth shipping in a binary that is expensive to replace --
+# and this program deliberately accepts arbitrary Token-2022 mints, which is
+# precisely the surface that reaches into the spl-token-2022 crypto stack these
+# functions live in.
+#
+# Compiling just these two crates at opt-level 3 restores the inlining that
+# removes the functions entirely. Measured: 16 diagnostics -> 0, and the binary
+# got 608 bytes *smaller* (542,912 -> 542,304) rather than larger.
+#
+# If a future toolchain bump makes these lines unnecessary, remove them and
+# check the build log for "stack offset" before concluding that it is safe.
+[profile.release.package.crypto-common]
+opt-level = 3
+
+[profile.release.package.hybrid-array]
+opt-level = 3

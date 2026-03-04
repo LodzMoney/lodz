@@ -1,0 +1,47 @@
+[package]
+name = "lodz-vault"
+version = "0.1.0"
+description = "LODZ vault: Adit onboarding, Seam registry, Stope vaults, Orecart redemption queue, keeper bond and slash"
+edition = "2021"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "lodz_vault"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+# `init-if-needed` is used by exactly two accounts: the depositor's Miner
+# position and the Keeper record. Both are per-signer accounts whose creation
+# would otherwise cost the user an extra transaction. Every other account uses
+# plain `init`. The feature is kept to those two sites because `init_if_needed`
+# is the largest single source of the 4096-byte stack frame blow-ups recorded
+# in references/solana/anchor-lessons.md.
+anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }
+# token + token_2022, both reached through `anchor_spl::token_interface`.
+# A BTC representation on Solana may be a classic SPL Token mint or a
+# Token-2022 mint, and this program must accept either, so no instruction here
+# ever names a concrete token program: the token program is pinned per Adit at
+# registration and re-checked on every transfer.
+#
+# `associated_token` is deliberately excluded. Every program-owned token
+# account in LODZ is a seeded PDA token account, and user-side token accounts
+# are validated by explicit mint/authority constraints rather than by ATA
+# derivation. That is one less program in every account list and one less
+# dependency in the SBF binary.
+anchor-spl = { version = "0.31.1", default-features = false, features = [
+    "token",
+    "token_2022",
+] }
+
+[dev-dependencies]
+# Host-side unit tests only (account length arithmetic, integer math). Nothing
+# in this package talks to a cluster.
+anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }
