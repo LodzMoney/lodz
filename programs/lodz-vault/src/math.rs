@@ -157,3 +157,87 @@ pub fn validate_ascii_label(bytes: &[u8]) -> bool {
 
     non_empty
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mul_div_floors_and_does_not_wrap() {
+        assert_eq!(mul_div_floor(7, 3, 2).unwrap(), 10);
+        assert_eq!(mul_div_floor(u64::MAX, 1, 1).unwrap(), u64::MAX);
+        // u64::MAX * 2 overflows u64 but not u128; the result narrows cleanly.
+        assert_eq!(mul_div_floor(u64::MAX, 2, 2).unwrap(), u64::MAX);
+        // ... and a result that genuinely exceeds u64 is an error, not a wrap.
+        assert!(mul_div_floor(u64::MAX, 2, 1).is_err());
+        assert!(mul_div_floor(1, 1, 0).is_err());
+    }
+
+    #[test]
+    fn bps_fraction_matches_hand_arithmetic() {
+        assert_eq!(bps_fraction(1_000_000, 25).unwrap(), 2_500);
+        assert_eq!(bps_fraction(1_000_000, 10_000).unwrap(), 1_000_000);
+        assert_eq!(bps_fraction(1_000_000, 0).unwrap(), 0);
+        // Floors rather than rounding: 3 * 1 / 10_000 == 0.
+        assert_eq!(bps_fraction(3, 1).unwrap(), 0);
+    }
+
+    #[test]
+    fn normalization_round_trip_never_creates_value() {
+        // A 6-decimal BTC representation into an 8-decimal internal unit.
+        let (num, den) = (100u64, 1u64);
+        let normalized = to_normalized(1_000_000, num, den).unwrap();
+        assert_eq!(normalized, 100_000_000);
+        assert_eq!(from_normalized(normalized, num, den).unwrap(), 1_000_000);
+
+        // An 18-decimal representation shrinks; the round trip floors and can
+        // only ever lose dust, never gain it.
+        let (num, den) = (1u64, 10_000_000_000u64);
+        let normalized = to_normalized(1_000_000_000_000_000_000, num, den).unwrap();
+        assert_eq!(normalized, 100_000_000);
+        let back = from_normalized(normalized, num, den).unwrap();
+        assert!(back <= 1_000_000_000_000_000_000);
+    }
+
+    #[test]
+    fn index_accrual_is_conservative() {
+        // 1 BTC of shares, 0.01 BTC of yield.
+        let index = index_delta(1_000_000, 100_000_000).unwrap();
+        let owed = pending_from_index(100_000_000, index, 0).unwrap();
+        assert!(owed <= 1_000_000, "distributed more than was accrued");
+        assert_eq!(owed, 1_000_000);
+
+        // Two holders splitting the same accrual cannot claim more than it.
+        let a = pending_from_index(60_000_000, index, 0).unwrap();
+        let b = pending_from_index(40_000_000, index, 0).unwrap();
+        assert!(a + b <= 1_000_000);
+    }
+
+    #[test]
+    fn accrual_into_an_empty_stope_is_rejected() {
+        assert!(index_delta(1_000, 0).is_err());
+    }
+
+    #[test]
+    fn queue_delay_scales_with_backlog() {
+        // Empty queue: no congestion term.
+        assert_eq!(queue_delay_sec(0, 100_000_000).unwrap(), 0);
+        // Exactly one day of drain already queued: one extra day.
+        assert_eq!(queue_delay_sec(100_000_000, 100_000_000).unwrap(), 86_400);
+        // Half a day.
+        assert_eq!(queue_delay_sec(50_000_000, 100_000_000).unwrap(), 43_200);
+        assert!(queue_delay_sec(1, 0).is_err());
+    }
+
+    #[test]
+    fn ascii_labels_must_be_nul_padded() {
+        assert!(validate_ascii_label(b"zBTC\0\0\0\0"));
+        assert!(validate_ascii_label(b"kyros-lend\0\0"));
+        // all padding
+        assert!(!validate_ascii_label(b"\0\0\0\0"));
+        // padding in the middle
+        assert!(!validate_ascii_label(b"zB\0TC\0\0\0"));
+        // non-printable
+        assert!(!validate_ascii_label(b"zB\x01C\0\0\0\0"));
+    }
+}
