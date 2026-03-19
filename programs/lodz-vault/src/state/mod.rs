@@ -102,3 +102,210 @@ pub const MAX_MINT_DECIMALS: u8 = 18;
 /// zero would read as "none".
 pub const MIN_RISK_TIER: u8 = 1;
 pub const MAX_RISK_TIER: u8 = 5;
+
+// ---------------------------------------------------------------------------
+// Shared enums
+// ---------------------------------------------------------------------------
+
+/// How a seam produces its yield.
+///
+/// This split is the product. A protocol that reports one blended APY cannot
+/// tell a depositor whether the number survives next quarter, so the two are
+/// never summed into a single field anywhere in this program: separate
+/// accumulators on the [`Stope`], separate accumulators on the [`Miner`], and
+/// a `yield_kind` on every `YieldAccrued` event.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum YieldKind {
+    /// Paid out of fees or interest that a counterparty is actually paying:
+    /// borrow interest, swap fees, basis. It can fall to zero, but nothing
+    /// about it is scheduled to end.
+    ///
+    /// Named `SustainableYield` in the LODZ product vocabulary.
+    Sustainable,
+    /// Paid out of a token emission schedule. It ends on a known date, and
+    /// [`Seam::emission_ends_at`] is required to say when.
+    ///
+    /// Named `EmissionsYield` in the LODZ product vocabulary.
+    Emissions,
+}
+
+/// What kind of claim a deposited token actually is.
+///
+/// No variant here is bitcoin on the Bitcoin network. A deposit into LODZ is a
+/// deposit of an SPL or Token-2022 token that stands in for bitcoin held
+/// somewhere else, and the variant records which "somewhere else" the
+/// depositor is exposed to.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CustodyKind {
+    /// Minted by a bridge against bitcoin locked on another chain. The holder
+    /// is exposed to the bridge's validator set and its contracts.
+    BridgeMinted,
+    /// Issued by a named custodian that publishes a redemption process. The
+    /// holder is exposed to that custodian.
+    CustodianRedeemable,
+    /// Tracks the price of bitcoin without a per-token reserve behind it. The
+    /// holder is exposed to whatever mechanism maintains the peg.
+    SyntheticExposure,
+}
+
+/// Risk appetite of a stope. Fixed to the stope id: 0 conservative,
+/// 1 balanced, 2 aggressive.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RiskProfile {
+    Conservative,
+    Balanced,
+    Aggressive,
+}
+
+impl RiskProfile {
+    /// The canonical profile for a stope id. `None` for any id >= 3.
+    pub fn from_id(id: u8) -> Option<Self> {
+        match id {
+            0 => Some(Self::Conservative),
+            1 => Some(Self::Balanced),
+            2 => Some(Self::Aggressive),
+            _ => None,
+        }
+    }
+
+    pub fn id(&self) -> u8 {
+        match self {
+            Self::Conservative => 0,
+            Self::Balanced => 1,
+            Self::Aggressive => 2,
+        }
+    }
+
+    /// Ceiling on how much of a stope's allocation may sit on seams whose
+    /// yield is [`YieldKind::Emissions`].
+    ///
+    /// Enforced by `register_seam` and `update_seam_allocation`, so the
+    /// difference between the three stopes is a constraint the chain rejects
+    /// transactions over, not a label on a marketing page.
+    pub fn max_emissions_bps(&self) -> u16 {
+        match self {
+            Self::Conservative => 2_000,
+            Self::Balanced => 5_000,
+            Self::Aggressive => 10_000,
+        }
+    }
+
+    /// Highest headlamp risk tier a seam may carry to be routable from this
+    /// stope.
+    pub fn max_risk_tier(&self) -> u8 {
+        match self {
+            Self::Conservative => 2,
+            Self::Balanced => 3,
+            Self::Aggressive => 5,
+        }
+    }
+}
+
+/// Lifecycle of an Orecart redemption ticket.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TicketStatus {
+    /// Shares are burned, the payout is reserved, the delay is running.
+    Queued,
+    /// Paid out.
+    Claimed,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Deserialize exactly `LEN` zero bytes, then serialize the result back.
+    ///
+    /// Borsh's `try_from_slice` fails both when the buffer is too short and
+    /// when bytes are left over, so this asserts the declared `LEN` against
+    /// the real wire layout in both directions at once. A hand-counted `LEN`
+    /// that is one byte off fails here rather than in production, where it
+    /// would truncate the last field of every account of that type.
+    fn assert_len<T: AnchorSerialize + AnchorDeserialize>(name: &str, len: usize) {
+        let zeros = vec![0u8; len];
+        let value = T::try_from_slice(&zeros)
+            .unwrap_or_else(|e| panic!("{name}::LEN = {len} does not decode exactly: {e}"));
+        let encoded = value.try_to_vec().expect("serialize").len();
+        assert_eq!(encoded, len, "{name} re-encodes to {encoded}, not {len}");
+    }
+
+    #[test]
+    fn declared_lengths_match_the_structs() {
+        assert_len::<VaultConfig>("VaultConfig", VaultConfig::LEN);
+        assert_len::<Adit>("Adit", Adit::LEN);
+        assert_len::<Stope>("Stope", Stope::LEN);
+        assert_len::<Seam>("Seam", Seam::LEN);
+        assert_len::<Miner>("Miner", Miner::LEN);
+        assert_len::<Orecart>("Orecart", Orecart::LEN);
+        assert_len::<OrecartQueue>("OrecartQueue", OrecartQueue::LEN);
+        assert_len::<Keeper>("Keeper", Keeper::LEN);
+    }
+
+    /// Locks the account size table in README.md to the code.
+    ///
+    /// These numbers decide rent, so they are quoted in the README and read by
+    /// whoever funds the deployment. Asserting them here means the table
+    /// cannot drift away from the structs without a test failing.
+    #[test]
+    fn account_sizes_match_the_readme_table() {
+        assert_eq!(VaultConfig::LEN, 288);
+        assert_eq!(Adit::LEN, 200);
+        assert_eq!(Stope::LEN, 184);
+        assert_eq!(Seam::LEN, 256);
+        assert_eq!(Miner::LEN, 184);
+        assert_eq!(Orecart::LEN, 192);
+        assert_eq!(OrecartQueue::LEN, 104);
+        assert_eq!(Keeper::LEN, 120);
+    }
+
+    #[test]
+    fn every_account_is_eight_byte_aligned() {
+        for (name, len) in [
+            ("VaultConfig", VaultConfig::LEN),
+            ("Adit", Adit::LEN),
+            ("Stope", Stope::LEN),
+            ("Seam", Seam::LEN),
+            ("Miner", Miner::LEN),
+            ("Orecart", Orecart::LEN),
+            ("OrecartQueue", OrecartQueue::LEN),
+            ("Keeper", Keeper::LEN),
+        ] {
+            assert_eq!(len % 8, 0, "{name}::LEN ({len}) is not 8-byte aligned");
+        }
+    }
+
+    #[test]
+    fn stope_ids_map_to_exactly_three_profiles() {
+        assert_eq!(RiskProfile::from_id(0), Some(RiskProfile::Conservative));
+        assert_eq!(RiskProfile::from_id(1), Some(RiskProfile::Balanced));
+        assert_eq!(RiskProfile::from_id(2), Some(RiskProfile::Aggressive));
+        assert_eq!(RiskProfile::from_id(3), None);
+        assert_eq!(RiskProfile::from_id(u8::MAX), None);
+
+        for id in 0..STOPE_COUNT {
+            let profile = RiskProfile::from_id(id).expect("profile");
+            assert_eq!(profile.id(), id);
+        }
+    }
+
+    #[test]
+    fn risk_appetite_is_monotonic_across_profiles() {
+        let c = RiskProfile::Conservative;
+        let b = RiskProfile::Balanced;
+        let a = RiskProfile::Aggressive;
+
+        assert!(c.max_emissions_bps() < b.max_emissions_bps());
+        assert!(b.max_emissions_bps() < a.max_emissions_bps());
+        assert!(c.max_risk_tier() < b.max_risk_tier());
+        assert!(b.max_risk_tier() < a.max_risk_tier());
+        assert!(a.max_risk_tier() <= MAX_RISK_TIER);
+    }
+
+    /// The seeds a client derives are the seeds this program derives.
+    #[test]
+    fn numeric_seeds_are_little_endian() {
+        assert_eq!(1u8.to_le_bytes(), [1]);
+        assert_eq!(258u16.to_le_bytes(), [0x02, 0x01]);
+        assert_eq!(1u32.to_le_bytes(), [0x01, 0x00, 0x00, 0x00]);
+    }
+}
