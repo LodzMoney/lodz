@@ -136,3 +136,101 @@ pub struct YieldAccrued {
     pub emission_ends_at: i64,
     pub timestamp: i64,
 }
+
+#[event]
+pub struct RedemptionRequested {
+    pub owner: Pubkey,
+    pub orecart: Pubkey,
+    pub ticket_index: u32,
+    pub stope_id: u8,
+    pub asset_mint: Pubkey,
+    pub shares_burned: u64,
+    pub normalized_amount: u64,
+    pub fee_bps: u16,
+    pub fee_normalized: u64,
+    pub gross_amount: u64,
+    pub payout_amount: u64,
+    pub queue_position: u64,
+    /// Backlog standing in front of this ticket when it was issued.
+    pub queue_pending_ahead: u64,
+    pub requested_at: i64,
+    /// The enforced gate, not an estimate.
+    pub claimable_at: i64,
+}
+
+#[event]
+pub struct RedemptionClaimed {
+    pub owner: Pubkey,
+    pub orecart: Pubkey,
+    pub ticket_index: u32,
+    pub stope_id: u8,
+    pub asset_mint: Pubkey,
+    pub payout_amount: u64,
+    pub fee_amount: u64,
+    pub normalized_amount: u64,
+    /// How long the depositor actually waited, in seconds.
+    pub waited_sec: i64,
+    pub queue_total_pending: u64,
+    pub claimed_at: i64,
+}
+
+#[event]
+pub struct KeeperBonded {
+    pub keeper: Pubkey,
+    pub authority: Pubkey,
+    pub amount: u64,
+    pub bonded_amount: u64,
+    pub active: bool,
+    pub keeper_count: u16,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct KeeperUnbonded {
+    pub keeper: Pubkey,
+    pub authority: Pubkey,
+    pub amount: u64,
+    pub bonded_amount: u64,
+    pub active: bool,
+    pub keeper_count: u16,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct KeeperSlashed {
+    pub keeper: Pubkey,
+    pub authority: Pubkey,
+    pub slashed_by: Pubkey,
+    pub amount: u64,
+    pub bonded_amount: u64,
+    pub slash_count: u32,
+    /// Free-form reason code recorded on-chain so a slash can be argued about
+    /// with a reference rather than from memory.
+    pub reason_code: u16,
+    pub active: bool,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct VaultPauseChanged {
+    pub vault_config: Pubkey,
+    pub authority: Pubkey,
+    pub paused: bool,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct AuthorityTransferProposed {
+    pub vault_config: Pubkey,
+    pub authority: Pubkey,
+    pub pending_authority: Pubkey,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct AuthorityTransferAccepted {
+    pub vault_config: Pubkey,
+    pub previous_authority: Pubkey,
+    pub authority: Pubkey,
+    pub timestamp: i64,
+}
