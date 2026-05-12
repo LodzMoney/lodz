@@ -191,3 +191,204 @@ pub fn initialize_bond_vault(ctx: Context<InitializeBondVault>) -> Result<()> {
     });
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// register_adit
+// ---------------------------------------------------------------------------
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct RegisterAditParams {
+    /// NUL-padded ASCII, e.g. `zBTC`.
+    pub label: [u8; 16],
+    /// What the depositor is exposed to. None of the variants is native
+    /// bitcoin.
+    pub custody_kind: CustodyKind,
+    /// Headlamp tier, 1..=5.
+    pub risk_tier: u8,
+    /// `normalized = floor(amount * conversion_num / conversion_den)`.
+    pub conversion_num: u64,
+    pub conversion_den: u64,
+    /// Cap on native units custodied here. Zero means uncapped.
+    pub deposit_cap: u64,
+}
+
+#[derive(Accounts)]
+pub struct RegisterAdit<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [VAULT_CONFIG_SEED],
+        bump = vault_config.bump,
+        has_one = authority @ LodzError::Unauthorized,
+    )]
+    pub vault_config: Box<Account<'info, VaultConfig>>,
+
+    pub asset_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + Adit::LEN,
+        seeds = [ADIT_SEED, asset_mint.key().as_ref()],
+        bump
+    )]
+    pub adit: Box<Account<'info, Adit>>,
+
+    #[account(
+        init,
+        payer = authority,
+        seeds = [ADIT_VAULT_SEED, asset_mint.key().as_ref()],
+        bump,
+        token::mint = asset_mint,
+        token::authority = vault_config,
+        token::token_program = token_program,
+    )]
+    pub adit_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    pub token_program: Interface<'info, TokenInterface>,
+    pub system_program: Program<'info, System>,
+}
+
+pub fn register_adit(ctx: Context<RegisterAdit>, params: RegisterAditParams) -> Result<()> {
+    require!(
+        params.conversion_num != 0 && params.conversion_den != 0,
+        LodzError::InvalidConversionRatio
+    );
+    require!(
+        params.risk_tier >= MIN_RISK_TIER && params.risk_tier <= MAX_RISK_TIER,
+        LodzError::InvalidRiskTier
+    );
+    require!(
+        validate_ascii_label(&params.label),
+        LodzError::InvalidLabel
+    );
+
+    let decimals = ctx.accounts.asset_mint.decimals;
+    require!(decimals <= MAX_MINT_DECIMALS, LodzError::InvalidDecimals);
+
+    let now = Clock::get()?.unix_timestamp;
+
+    let adit = &mut ctx.accounts.adit;
+    adit.asset_mint = ctx.accounts.asset_mint.key();
+    adit.token_program = ctx.accounts.token_program.key();
+    adit.vault = ctx.accounts.adit_vault.key();
+    adit.conversion_num = params.conversion_num;
+    adit.conversion_den = params.conversion_den;
+    adit.deposit_cap = params.deposit_cap;
+    adit.total_deposited = 0;
+    adit.total_normalized = 0;
+    adit.registered_at = now;
+    adit.label = params.label;
+    adit.custody_kind = params.custody_kind;
+    adit.risk_tier = params.risk_tier;
+    adit.decimals = decimals;
+    adit.paused = false;
+    adit.bump = ctx.bumps.adit;
+
+    let config = &mut ctx.accounts.vault_config;
+    config.adit_count = config
+        .adit_count
+        .checked_add(1)
+        .ok_or(LodzError::MathOverflow)?;
+
+    emit!(AditRegistered {
+        adit: adit.key(),
+        asset_mint: adit.asset_mint,
+        vault: adit.vault,
+        token_program: adit.token_program,
+        label: adit.label,
+        custody_kind: adit.custody_kind,
+        risk_tier: adit.risk_tier,
+        decimals: adit.decimals,
+        conversion_num: adit.conversion_num,
+        conversion_den: adit.conversion_den,
+        deposit_cap: adit.deposit_cap,
+        timestamp: now,
+    });
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// open_stope
+// ---------------------------------------------------------------------------
+
+#[derive(Accounts)]
+#[instruction(stope_id: u8)]
+pub struct OpenStope<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [VAULT_CONFIG_SEED],
+        bump = vault_config.bump,
+        has_one = authority @ LodzError::Unauthorized,
+    )]
+    pub vault_config: Box<Account<'info, VaultConfig>>,
+
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + Stope::LEN,
+        seeds = [STOPE_SEED, &stope_id.to_le_bytes()],
+        bump
+    )]
+    pub stope: Box<Account<'info, Stope>>,
+
+    /// The stope and its queue are created together: a stope that can take
+    /// deposits before its redemption queue exists is a stope you can get into
+    /// and not out of.
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + OrecartQueue::LEN,
+        seeds = [ORECART_QUEUE_SEED, &stope_id.to_le_bytes()],
+        bump
+    )]
+    pub orecart_queue: Box<Account<'info, OrecartQueue>>,
+
+    pub system_program: Program<'info, System>,
+}
+
+pub fn open_stope(ctx: Context<OpenStope>, stope_id: u8, risk_profile: RiskProfile) -> Result<()> {
+    let canonical = RiskProfile::from_id(stope_id).ok_or(LodzError::InvalidStopeId)?;
+    require!(
+        canonical == risk_profile,
+        LodzError::RiskProfileMismatch
+    );
+
+    let now = Clock::get()?.unix_timestamp;
+
+    let stope = &mut ctx.accounts.stope;
+    stope.stope_id = stope_id;
+    stope.risk_profile = risk_profile;
+    stope.paused = false;
+    stope.bump = ctx.bumps.stope;
+    stope.created_at = now;
+
+    let queue = &mut ctx.accounts.orecart_queue;
+    queue.stope_id = stope_id;
+    queue.bump = ctx.bumps.orecart_queue;
+
+    let config = &mut ctx.accounts.vault_config;
+    config.stope_count = config
+        .stope_count
+        .checked_add(1)
+        .ok_or(LodzError::MathOverflow)?;
+    require!(config.stope_count <= STOPE_COUNT, LodzError::InvalidStopeId);
+
+    emit!(StopeOpened {
+        stope: stope.key(),
+        stope_id,
+        risk_profile,
+        max_emissions_bps: risk_profile.max_emissions_bps(),
+        max_risk_tier: risk_profile.max_risk_tier(),
+        orecart_queue: queue.key(),
+        timestamp: now,
+    });
+
+    Ok(())
+}
