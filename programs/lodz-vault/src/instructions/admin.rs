@@ -392,3 +392,157 @@ pub fn open_stope(ctx: Context<OpenStope>, stope_id: u8, risk_profile: RiskProfi
 
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// register_seam
+// ---------------------------------------------------------------------------
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct RegisterSeamParams {
+    /// NUL-padded ASCII venue name.
+    pub venue: [u8; 32],
+    /// Venue program, or `Pubkey::default()` when the venue is not a Solana
+    /// program.
+    pub venue_program: Pubkey,
+    pub yield_kind: YieldKind,
+    pub allocation_bps: u16,
+    pub risk_tier: u8,
+    /// Required non-zero and in the future for `YieldKind::Emissions`,
+    /// required zero for `YieldKind::Sustainable`.
+    pub emission_ends_at: i64,
+    /// Required set for `YieldKind::Emissions`, required default for
+    /// `YieldKind::Sustainable`.
+    pub emission_mint: Pubkey,
+}
+
+#[derive(Accounts)]
+#[instruction(seam_id: u16, stope_id: u8)]
+pub struct RegisterSeam<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [VAULT_CONFIG_SEED],
+        bump = vault_config.bump,
+        has_one = authority @ LodzError::Unauthorized,
+    )]
+    pub vault_config: Box<Account<'info, VaultConfig>>,
+
+    #[account(
+        mut,
+        seeds = [STOPE_SEED, &stope_id.to_le_bytes()],
+        bump = stope.bump,
+    )]
+    pub stope: Box<Account<'info, Stope>>,
+
+    pub asset_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    /// A seam can only deploy an asset LODZ actually accepts. Requiring the
+    /// adit here is what keeps the registry a connected graph rather than two
+    /// lists that happen to mention the same mint.
+    #[account(
+        seeds = [ADIT_SEED, asset_mint.key().as_ref()],
+        bump = adit.bump,
+        has_one = asset_mint @ LodzError::AditMintMismatch,
+    )]
+    pub adit: Box<Account<'info, Adit>>,
+
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + Seam::LEN,
+        seeds = [SEAM_SEED, &seam_id.to_le_bytes()],
+        bump
+    )]
+    pub seam: Box<Account<'info, Seam>>,
+
+    pub system_program: Program<'info, System>,
+}
+
+pub fn register_seam(
+    ctx: Context<RegisterSeam>,
+    seam_id: u16,
+    stope_id: u8,
+    params: RegisterSeamParams,
+) -> Result<()> {
+    let now = Clock::get()?.unix_timestamp;
+
+    require!(
+        validate_ascii_label(&params.venue),
+        LodzError::InvalidVenueName
+    );
+    require!(
+        params.risk_tier >= MIN_RISK_TIER && params.risk_tier <= MAX_RISK_TIER,
+        LodzError::InvalidRiskTier
+    );
+    require!(
+        params.allocation_bps <= MAX_BPS,
+        LodzError::InvalidAllocationBps
+    );
+
+    // The disclosure gate: an emissions seam must say when the emission ends
+    // and what it is paid in, and a sustainable seam must not carry either.
+    Seam::validate_emission_fields(
+        params.yield_kind,
+        params.emission_ends_at,
+        &params.emission_mint,
+        now,
+    )?;
+
+    let stope = &mut ctx.accounts.stope;
+    require!(
+        params.risk_tier <= stope.risk_profile.max_risk_tier(),
+        LodzError::RiskTierExceedsStopeProfile
+    );
+
+    // Also bounds the stope's emissions exposure against its risk profile.
+    stope.reallocate(params.yield_kind, 0, params.allocation_bps)?;
+    stope.seam_count = stope
+        .seam_count
+        .checked_add(1)
+        .ok_or(LodzError::MathOverflow)?;
+
+    let seam = &mut ctx.accounts.seam;
+    seam.seam_id = seam_id;
+    seam.allocation_bps = params.allocation_bps;
+    seam.stope_id = stope_id;
+    seam.yield_kind = params.yield_kind;
+    seam.risk_tier = params.risk_tier;
+    seam.active = true;
+    seam.bump = ctx.bumps.seam;
+    seam.venue = params.venue;
+    seam.venue_program = params.venue_program;
+    seam.asset_mint = ctx.accounts.asset_mint.key();
+    seam.emission_mint = params.emission_mint;
+    seam.realized_yield = 0;
+    seam.accrual_count = 0;
+    seam.emission_ends_at = params.emission_ends_at;
+    seam.registered_at = now;
+    seam.last_accrual_at = 0;
+    seam.last_rebalance_at = now;
+
+    let config = &mut ctx.accounts.vault_config;
+    config.seam_count = config
+        .seam_count
+        .checked_add(1)
+        .ok_or(LodzError::MathOverflow)?;
+
+    emit!(SeamRegistered {
+        seam: seam.key(),
+        seam_id,
+        stope_id,
+        venue: seam.venue,
+        venue_program: seam.venue_program,
+        asset_mint: seam.asset_mint,
+        yield_kind: seam.yield_kind,
+        allocation_bps: seam.allocation_bps,
+        risk_tier: seam.risk_tier,
+        emission_ends_at: seam.emission_ends_at,
+        emission_mint: seam.emission_mint,
+        stope_emissions_bps: ctx.accounts.stope.emissions_bps,
+        timestamp: now,
+    });
+
+    Ok(())
+}
