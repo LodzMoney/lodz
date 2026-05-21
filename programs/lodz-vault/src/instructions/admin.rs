@@ -546,3 +546,249 @@ pub fn register_seam(
 
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// pause_vault / unpause_vault
+// ---------------------------------------------------------------------------
+
+#[derive(Accounts)]
+pub struct SetPause<'info> {
+    pub authority: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [VAULT_CONFIG_SEED],
+        bump = vault_config.bump,
+        has_one = authority @ LodzError::Unauthorized,
+    )]
+    pub vault_config: Box<Account<'info, VaultConfig>>,
+}
+
+/// Stop deposits, accrual, redemption requests and rebalances.
+///
+/// `claim_redemption` is deliberately left running. A ticket whose delay has
+/// already elapsed is a settled debt, and a pause switch that can strand it
+/// would make the queue a promise the authority can revoke.
+pub fn pause_vault(ctx: Context<SetPause>) -> Result<()> {
+    let config = &mut ctx.accounts.vault_config;
+    require!(!config.paused, LodzError::VaultPaused);
+    config.paused = true;
+
+    emit!(VaultPauseChanged {
+        vault_config: config.key(),
+        authority: config.authority,
+        paused: true,
+        timestamp: Clock::get()?.unix_timestamp,
+    });
+    Ok(())
+}
+
+pub fn unpause_vault(ctx: Context<SetPause>) -> Result<()> {
+    let config = &mut ctx.accounts.vault_config;
+    require!(config.paused, LodzError::VaultNotPaused);
+    config.paused = false;
+
+    emit!(VaultPauseChanged {
+        vault_config: config.key(),
+        authority: config.authority,
+        paused: false,
+        timestamp: Clock::get()?.unix_timestamp,
+    });
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// slash_keeper
+// ---------------------------------------------------------------------------
+
+#[derive(Accounts)]
+pub struct SlashKeeper<'info> {
+    pub authority: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [VAULT_CONFIG_SEED],
+        bump = vault_config.bump,
+        has_one = authority @ LodzError::Unauthorized,
+        has_one = lodz_mint @ LodzError::AditMintMismatch,
+        constraint = token_program.key() == vault_config.lodz_token_program
+            @ LodzError::TokenProgramMismatch,
+    )]
+    pub vault_config: Box<Account<'info, VaultConfig>>,
+
+    /// CHECK: used only as the second PDA seed of `keeper`; the keeper
+    /// record's own `authority` field is compared against it below.
+    pub keeper_authority: UncheckedAccount<'info>,
+
+    #[account(
+        mut,
+        seeds = [KEEPER_SEED, keeper_authority.key().as_ref()],
+        bump = keeper.bump,
+        constraint = keeper.authority == keeper_authority.key()
+            @ LodzError::KeeperAuthorityMismatch,
+    )]
+    pub keeper: Box<Account<'info, Keeper>>,
+
+    pub lodz_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(
+        mut,
+        seeds = [BOND_VAULT_SEED],
+        bump,
+        token::mint = lodz_mint,
+        token::authority = vault_config,
+        token::token_program = token_program,
+    )]
+    pub bond_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        constraint = treasury.key() == vault_config.treasury @ LodzError::TreasuryMismatch,
+        token::mint = lodz_mint,
+        token::token_program = token_program,
+    )]
+    pub treasury: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
+pub fn slash_keeper(ctx: Context<SlashKeeper>, amount: u64, reason_code: u16) -> Result<()> {
+    require!(amount > 0, LodzError::ZeroAmount);
+    require!(
+        amount <= ctx.accounts.keeper.bonded_amount,
+        LodzError::InsufficientBond
+    );
+
+    let now = Clock::get()?.unix_timestamp;
+    let decimals = ctx.accounts.lodz_mint.decimals;
+    let config_bump = [ctx.accounts.vault_config.bump];
+    let seeds = VaultConfig::signer_seeds(&config_bump);
+    let signer_seeds: &[&[&[u8]]] = &[&seeds];
+
+    token_interface::transfer_checked(
+        CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            TransferChecked {
+                from: ctx.accounts.bond_vault.to_account_info(),
+                mint: ctx.accounts.lodz_mint.to_account_info(),
+                to: ctx.accounts.treasury.to_account_info(),
+                authority: ctx.accounts.vault_config.to_account_info(),
+            },
+            signer_seeds,
+        ),
+        amount,
+        decimals,
+    )?;
+
+    let min_bond = ctx.accounts.vault_config.min_keeper_bond;
+    let keeper = &mut ctx.accounts.keeper;
+    keeper.bonded_amount = keeper.bonded_amount.saturating_sub(amount);
+    keeper.slashed_amount = keeper
+        .slashed_amount
+        .checked_add(amount)
+        .ok_or(LodzError::MathOverflow)?;
+    keeper.slash_count = keeper
+        .slash_count
+        .checked_add(1)
+        .ok_or(LodzError::MathOverflow)?;
+
+    let transition = keeper.refresh_active(min_bond);
+    let keeper_key = keeper.key();
+    let keeper_authority = keeper.authority;
+    let bonded_amount = keeper.bonded_amount;
+    let slash_count = keeper.slash_count;
+    let active = keeper.active;
+
+    let config = &mut ctx.accounts.vault_config;
+    match transition {
+        Some(true) => {
+            config.keeper_count = config
+                .keeper_count
+                .checked_add(1)
+                .ok_or(LodzError::MathOverflow)?
+        }
+        Some(false) => config.keeper_count = config.keeper_count.saturating_sub(1),
+        None => {}
+    }
+
+    emit!(KeeperSlashed {
+        keeper: keeper_key,
+        authority: keeper_authority,
+        slashed_by: ctx.accounts.authority.key(),
+        amount,
+        bonded_amount,
+        slash_count,
+        reason_code,
+        active,
+        timestamp: now,
+    });
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// authority handover (two step)
+// ---------------------------------------------------------------------------
+
+#[derive(Accounts)]
+pub struct ProposeAuthority<'info> {
+    pub authority: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [VAULT_CONFIG_SEED],
+        bump = vault_config.bump,
+        has_one = authority @ LodzError::Unauthorized,
+    )]
+    pub vault_config: Box<Account<'info, VaultConfig>>,
+
+    /// CHECK: recorded as the pending authority and required to sign
+    /// `accept_authority` before it takes effect.
+    pub new_authority: UncheckedAccount<'info>,
+}
+
+pub fn propose_authority(ctx: Context<ProposeAuthority>) -> Result<()> {
+    let config = &mut ctx.accounts.vault_config;
+    config.pending_authority = ctx.accounts.new_authority.key();
+
+    emit!(AuthorityTransferProposed {
+        vault_config: config.key(),
+        authority: config.authority,
+        pending_authority: config.pending_authority,
+        timestamp: Clock::get()?.unix_timestamp,
+    });
+    Ok(())
+}
+
+#[derive(Accounts)]
+pub struct AcceptAuthority<'info> {
+    pub pending_authority: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [VAULT_CONFIG_SEED],
+        bump = vault_config.bump,
+        has_one = pending_authority @ LodzError::NotPendingAuthority,
+    )]
+    pub vault_config: Box<Account<'info, VaultConfig>>,
+}
+
+pub fn accept_authority(ctx: Context<AcceptAuthority>) -> Result<()> {
+    let config = &mut ctx.accounts.vault_config;
+    require!(
+        config.pending_authority != Pubkey::default(),
+        LodzError::NoPendingAuthority
+    );
+
+    let previous = config.authority;
+    config.authority = config.pending_authority;
+    config.pending_authority = Pubkey::default();
+
+    emit!(AuthorityTransferAccepted {
+        vault_config: config.key(),
+        previous_authority: previous,
+        authority: config.authority,
+        timestamp: Clock::get()?.unix_timestamp,
+    });
+    Ok(())
+}
