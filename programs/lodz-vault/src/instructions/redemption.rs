@@ -261,3 +261,200 @@ pub fn request_redemption(
 
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// claim_redemption
+// ---------------------------------------------------------------------------
+
+#[derive(Accounts)]
+#[instruction(stope_id: u8, ticket_index: u32)]
+pub struct ClaimRedemption<'info> {
+    #[account(mut)]
+    pub owner: Signer<'info>,
+
+    #[account(
+        seeds = [VAULT_CONFIG_SEED],
+        bump = vault_config.bump,
+    )]
+    pub vault_config: Box<Account<'info, VaultConfig>>,
+
+    #[account(
+        mut,
+        seeds = [STOPE_SEED, &stope_id.to_le_bytes()],
+        bump = stope.bump,
+    )]
+    pub stope: Box<Account<'info, Stope>>,
+
+    #[account(
+        mut,
+        seeds = [MINER_SEED, owner.key().as_ref(), &stope_id.to_le_bytes()],
+        bump = miner.bump,
+        has_one = owner @ LodzError::Unauthorized,
+    )]
+    pub miner: Box<Account<'info, Miner>>,
+
+    #[account(
+        mut,
+        seeds = [ORECART_SEED, owner.key().as_ref(), &ticket_index.to_le_bytes()],
+        bump = orecart.bump,
+        has_one = owner @ LodzError::Unauthorized,
+        has_one = asset_mint @ LodzError::AditMintMismatch,
+        constraint = orecart.stope_id == stope_id @ LodzError::TicketStopeMismatch,
+    )]
+    pub orecart: Box<Account<'info, Orecart>>,
+
+    #[account(
+        mut,
+        seeds = [ORECART_QUEUE_SEED, &stope_id.to_le_bytes()],
+        bump = orecart_queue.bump,
+        constraint = orecart_queue.stope_id == stope_id @ LodzError::QueueStopeMismatch,
+    )]
+    pub orecart_queue: Box<Account<'info, OrecartQueue>>,
+
+    #[account(
+        mut,
+        seeds = [ADIT_SEED, asset_mint.key().as_ref()],
+        bump = adit.bump,
+        has_one = asset_mint @ LodzError::AditMintMismatch,
+        constraint = adit.vault == adit_vault.key() @ LodzError::AditVaultMismatch,
+        constraint = adit.token_program == token_program.key() @ LodzError::TokenProgramMismatch,
+    )]
+    pub adit: Box<Account<'info, Adit>>,
+
+    pub asset_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(
+        mut,
+        seeds = [ADIT_VAULT_SEED, asset_mint.key().as_ref()],
+        bump,
+        token::mint = asset_mint,
+        token::authority = vault_config,
+        token::token_program = token_program,
+    )]
+    pub adit_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        token::mint = asset_mint,
+        token::authority = owner,
+        token::token_program = token_program,
+    )]
+    pub owner_token: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
+/// Pay out a queued ticket.
+///
+/// Deliberately not gated on `VaultConfig::paused`. A ticket whose delay has
+/// elapsed is a settled debt, and a circuit breaker that can strand it would
+/// make every quoted wait conditional on the authority's goodwill.
+pub fn claim_redemption(
+    ctx: Context<ClaimRedemption>,
+    stope_id: u8,
+    ticket_index: u32,
+) -> Result<()> {
+    let now = Clock::get()?.unix_timestamp;
+
+    require!(
+        ctx.accounts.orecart.status == TicketStatus::Queued,
+        LodzError::TicketAlreadyClaimed
+    );
+    // The gate. Everything else in the Orecart design exists to make this line
+    // meaningful.
+    require!(
+        now >= ctx.accounts.orecart.claimable_at,
+        LodzError::RedemptionNotClaimable
+    );
+
+    let payout_amount = ctx.accounts.orecart.payout_amount;
+    let fee_amount = ctx.accounts.orecart.fee_amount;
+    let normalized = ctx.accounts.orecart.normalized_amount;
+    let fee_normalized = ctx.accounts.orecart.fee_normalized;
+    let requested_at = ctx.accounts.orecart.requested_at;
+
+    require!(payout_amount > 0, LodzError::ZeroPayout);
+    require!(
+        ctx.accounts.adit_vault.amount >= payout_amount,
+        LodzError::InsufficientVaultLiquidity
+    );
+
+    let decimals = ctx.accounts.adit.decimals;
+    let config_bump = [ctx.accounts.vault_config.bump];
+    let seeds = VaultConfig::signer_seeds(&config_bump);
+    let signer_seeds: &[&[&[u8]]] = &[&seeds];
+
+    token_interface::transfer_checked(
+        CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            TransferChecked {
+                from: ctx.accounts.adit_vault.to_account_info(),
+                mint: ctx.accounts.asset_mint.to_account_info(),
+                to: ctx.accounts.owner_token.to_account_info(),
+                authority: ctx.accounts.vault_config.to_account_info(),
+            },
+            signer_seeds,
+        ),
+        payout_amount,
+        decimals,
+    )?;
+
+    let ticket = &mut ctx.accounts.orecart;
+    ticket.status = TicketStatus::Claimed;
+    ticket.claimed_at = now;
+    let ticket_key = ticket.key();
+
+    let miner = &mut ctx.accounts.miner;
+    miner.pending_redemption = miner.pending_redemption.saturating_sub(normalized);
+    miner.withdrawn = miner
+        .withdrawn
+        .checked_add(normalized)
+        .ok_or(LodzError::MathOverflow)?;
+    miner.last_action_at = now;
+
+    let stope = &mut ctx.accounts.stope;
+    stope.pending_redemption = stope.pending_redemption.saturating_sub(normalized);
+    stope.total_redeemed = stope
+        .total_redeemed
+        .checked_add(normalized)
+        .ok_or(LodzError::MathOverflow)?;
+
+    let queue = &mut ctx.accounts.orecart_queue;
+    queue.head = queue.head.checked_add(1).ok_or(LodzError::MathOverflow)?;
+    queue.pending_tickets = queue.pending_tickets.saturating_sub(1);
+    queue.total_pending = queue.total_pending.saturating_sub(normalized);
+    queue.total_claimed = queue
+        .total_claimed
+        .checked_add(normalized)
+        .ok_or(LodzError::MathOverflow)?;
+    queue.total_fees = queue
+        .total_fees
+        .checked_add(fee_normalized)
+        .ok_or(LodzError::MathOverflow)?;
+    queue.last_claim_at = now;
+    let queue_total_pending = queue.total_pending;
+
+    // Only the payout leaves custody. The fee stays in the adit vault as
+    // protocol surplus, and it is deliberately not added back into
+    // `Stope::total_deposits`: it does not raise any share's accounted value,
+    // it sits as backing in excess of what the books claim. `total_fees` on
+    // the queue is the running record of it.
+    let adit = &mut ctx.accounts.adit;
+    adit.total_deposited = adit.total_deposited.saturating_sub(payout_amount);
+
+    emit!(RedemptionClaimed {
+        owner: ctx.accounts.owner.key(),
+        orecart: ticket_key,
+        ticket_index,
+        stope_id,
+        asset_mint: ctx.accounts.asset_mint.key(),
+        payout_amount,
+        fee_amount,
+        normalized_amount: normalized,
+        waited_sec: now.saturating_sub(requested_at),
+        queue_total_pending,
+        claimed_at: now,
+    });
+
+    Ok(())
+}
