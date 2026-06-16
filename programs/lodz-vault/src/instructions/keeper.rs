@@ -251,6 +251,116 @@ pub fn unbond_keeper(ctx: Context<UnbondKeeper>, amount: u64) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
+// update_seam_allocation
+// ---------------------------------------------------------------------------
+
+#[derive(Accounts)]
+#[instruction(seam_id: u16, stope_id: u8)]
+pub struct UpdateSeamAllocation<'info> {
+    pub keeper_authority: Signer<'info>,
+
+    #[account(
+        seeds = [VAULT_CONFIG_SEED],
+        bump = vault_config.bump,
+    )]
+    pub vault_config: Box<Account<'info, VaultConfig>>,
+
+    #[account(
+        mut,
+        seeds = [KEEPER_SEED, keeper_authority.key().as_ref()],
+        bump = keeper.bump,
+        constraint = keeper.authority == keeper_authority.key()
+            @ LodzError::KeeperAuthorityMismatch,
+    )]
+    pub keeper: Box<Account<'info, Keeper>>,
+
+    #[account(
+        mut,
+        seeds = [SEAM_SEED, &seam_id.to_le_bytes()],
+        bump = seam.bump,
+        constraint = seam.stope_id == stope_id @ LodzError::SeamStopeMismatch,
+    )]
+    pub seam: Box<Account<'info, Seam>>,
+
+    #[account(
+        mut,
+        seeds = [STOPE_SEED, &stope_id.to_le_bytes()],
+        bump = stope.bump,
+    )]
+    pub stope: Box<Account<'info, Stope>>,
+}
+
+pub fn update_seam_allocation(
+    ctx: Context<UpdateSeamAllocation>,
+    seam_id: u16,
+    stope_id: u8,
+    new_allocation_bps: u16,
+) -> Result<()> {
+    require!(!ctx.accounts.vault_config.paused, LodzError::VaultPaused);
+    require!(ctx.accounts.keeper.active, LodzError::KeeperNotActive);
+    require!(ctx.accounts.seam.active, LodzError::SeamInactive);
+    require!(
+        new_allocation_bps <= MAX_BPS,
+        LodzError::InvalidAllocationBps
+    );
+
+    let now = Clock::get()?.unix_timestamp;
+
+    // Capital cannot be routed into an emission schedule that has already run
+    // out. Winding an expired seam down to zero is always allowed.
+    if new_allocation_bps > 0 {
+        require!(
+            ctx.accounts.seam.accrual_window_open(now),
+            LodzError::EmissionEnded
+        );
+    }
+
+    let yield_kind = ctx.accounts.seam.yield_kind;
+    let previous_bps = ctx.accounts.seam.allocation_bps;
+
+    // Enforces both the 100 % ceiling and the stope's emissions ceiling.
+    ctx.accounts
+        .stope
+        .reallocate(yield_kind, previous_bps, new_allocation_bps)?;
+
+    let cooldown = ctx.accounts.vault_config.keeper_unbond_cooldown_sec;
+
+    let seam = &mut ctx.accounts.seam;
+    seam.allocation_bps = new_allocation_bps;
+    seam.last_rebalance_at = now;
+    let seam_key = seam.key();
+
+    let stope = &mut ctx.accounts.stope;
+    stope.last_rebalance_at = now;
+    let stope_allocated_bps = stope.allocated_bps;
+    let stope_emissions_bps = stope.emissions_bps;
+
+    let keeper = &mut ctx.accounts.keeper;
+    keeper.rebalance_count = keeper
+        .rebalance_count
+        .checked_add(1)
+        .ok_or(LodzError::MathOverflow)?;
+    keeper.last_rebalance_at = now;
+    keeper.unbond_ready_at = now.checked_add(cooldown).ok_or(LodzError::MathOverflow)?;
+    let keeper_key = keeper.key();
+
+    emit!(SeamRebalanced {
+        seam: seam_key,
+        seam_id,
+        stope_id,
+        keeper: keeper_key,
+        yield_kind,
+        previous_allocation_bps: previous_bps,
+        new_allocation_bps,
+        stope_allocated_bps,
+        stope_emissions_bps,
+        timestamp: now,
+    });
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // shared
 // ---------------------------------------------------------------------------
 
