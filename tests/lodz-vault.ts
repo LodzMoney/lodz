@@ -369,4 +369,230 @@ describe("lodz_vault", () => {
     const config = await program.account.vaultConfig.fetch(vaultConfig);
     assert.isFalse(config.paused);
   });
+
+  // -------------------------------------------------------------------------
+  // the disclosure gate
+  // -------------------------------------------------------------------------
+
+  const SUSTAINABLE_SEAM = 1;
+  const EMISSIONS_SEAM = 2;
+  const EXPIRING_SEAM = 3;
+
+  it("refuses an emissions seam with no end date", async () => {
+    await assert.isRejected(
+      program.methods
+        .registerSeam(99, BALANCED, {
+          venue: ascii(VENUE_SUSTAINABLE, 32),
+          venueProgram: PublicKey.default,
+          yieldKind: { emissions: {} },
+          allocationBps: 1000,
+          riskTier: 3,
+          emissionEndsAt: new BN(0),
+          emissionMint: emissionMint,
+        })
+        .accountsPartial({
+          authority: authority.publicKey,
+          vaultConfig,
+          stope: stopePda(BALANCED),
+          assetMint: btcMint,
+          adit,
+          seam: seamPda(99),
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc(),
+      /EmissionEndMissing/
+    );
+  });
+
+  it("refuses an emissions seam whose schedule already ended", async () => {
+    await assert.isRejected(
+      program.methods
+        .registerSeam(98, BALANCED, {
+          venue: ascii(VENUE_SUSTAINABLE, 32),
+          venueProgram: PublicKey.default,
+          yieldKind: { emissions: {} },
+          allocationBps: 1000,
+          riskTier: 3,
+          emissionEndsAt: new BN(now() - DAY),
+          emissionMint: emissionMint,
+        })
+        .accountsPartial({
+          authority: authority.publicKey,
+          vaultConfig,
+          stope: stopePda(BALANCED),
+          assetMint: btcMint,
+          adit,
+          seam: seamPda(98),
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc(),
+      /EmissionEndInPast/
+    );
+  });
+
+  it("refuses a sustainable seam that carries emission fields", async () => {
+    await assert.isRejected(
+      program.methods
+        .registerSeam(97, BALANCED, {
+          venue: ascii(VENUE_SUSTAINABLE, 32),
+          venueProgram: PublicKey.default,
+          yieldKind: { sustainable: {} },
+          allocationBps: 1000,
+          riskTier: 3,
+          emissionEndsAt: new BN(now() + DAY),
+          emissionMint: emissionMint,
+        })
+        .accountsPartial({
+          authority: authority.publicKey,
+          vaultConfig,
+          stope: stopePda(BALANCED),
+          assetMint: btcMint,
+          adit,
+          seam: seamPda(97),
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc(),
+      /EmissionFieldsOnSustainableSeam/
+    );
+  });
+
+  it("registers a sustainable and an emissions seam on the balanced stope", async () => {
+    await program.methods
+      .registerSeam(SUSTAINABLE_SEAM, BALANCED, {
+        venue: ascii(VENUE_SUSTAINABLE, 32),
+        venueProgram: PublicKey.default,
+        yieldKind: { sustainable: {} },
+        allocationBps: 6000,
+        riskTier: 3,
+        emissionEndsAt: new BN(0),
+        emissionMint: PublicKey.default,
+      })
+      .accountsPartial({
+        authority: authority.publicKey,
+        vaultConfig,
+        stope: stopePda(BALANCED),
+        assetMint: btcMint,
+        adit,
+        seam: seamPda(SUSTAINABLE_SEAM),
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+
+    await program.methods
+      .registerSeam(EMISSIONS_SEAM, BALANCED, {
+        venue: ascii(VENUE_EMISSIONS, 32),
+        venueProgram: PublicKey.default,
+        yieldKind: { emissions: {} },
+        allocationBps: 3000,
+        riskTier: 3,
+        emissionEndsAt: new BN(now() + 90 * DAY),
+        emissionMint: emissionMint,
+      })
+      .accountsPartial({
+        authority: authority.publicKey,
+        vaultConfig,
+        stope: stopePda(BALANCED),
+        assetMint: btcMint,
+        adit,
+        seam: seamPda(EMISSIONS_SEAM),
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+
+    const stope = await program.account.stope.fetch(stopePda(BALANCED));
+    assert.equal(stope.allocatedBps, 9000);
+    assert.equal(stope.emissionsBps, 3000, "emissions share is tracked apart");
+  });
+
+  it("refuses an emissions allocation above the conservative ceiling", async () => {
+    // Conservative caps emissions exposure at 2000 bps.
+    await assert.isRejected(
+      program.methods
+        .registerSeam(96, CONSERVATIVE, {
+          venue: ascii(VENUE_EMISSIONS, 32),
+          venueProgram: PublicKey.default,
+          yieldKind: { emissions: {} },
+          allocationBps: 2001,
+          riskTier: 2,
+          emissionEndsAt: new BN(now() + 90 * DAY),
+          emissionMint: emissionMint,
+        })
+        .accountsPartial({
+          authority: authority.publicKey,
+          vaultConfig,
+          stope: stopePda(CONSERVATIVE),
+          assetMint: btcMint,
+          adit,
+          seam: seamPda(96),
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc(),
+      /EmissionsAllocationExceeded/
+    );
+  });
+
+  it("refuses a seam whose risk tier is above the stope's profile", async () => {
+    await assert.isRejected(
+      program.methods
+        .registerSeam(95, CONSERVATIVE, {
+          venue: ascii(VENUE_SUSTAINABLE, 32),
+          venueProgram: PublicKey.default,
+          yieldKind: { sustainable: {} },
+          allocationBps: 1000,
+          riskTier: 5,
+          emissionEndsAt: new BN(0),
+          emissionMint: PublicKey.default,
+        })
+        .accountsPartial({
+          authority: authority.publicKey,
+          vaultConfig,
+          stope: stopePda(CONSERVATIVE),
+          assetMint: btcMint,
+          adit,
+          seam: seamPda(95),
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc(),
+      /RiskTierExceedsStopeProfile/
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // deposit
+  // -------------------------------------------------------------------------
+
+  it("takes a deposit and mints shares 1:1 into an empty stope", async () => {
+    await program.methods
+      .deposit(BALANCED, new BN(2 * ONE_BTC))
+      .accountsPartial({
+        depositor: alice.publicKey,
+        vaultConfig,
+        adit,
+        stope: stopePda(BALANCED),
+        miner: minerPda(alice.publicKey, BALANCED),
+        assetMint: btcMint,
+        depositorToken: aliceBtc,
+        aditVault,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([alice])
+      .rpc();
+
+    const miner = await program.account.miner.fetch(minerPda(alice.publicKey, BALANCED));
+    assert.equal(miner.shares.toNumber(), 2 * ONE_BTC);
+    assert.equal(miner.deposited.toNumber(), 2 * ONE_BTC);
+
+    const stope = await program.account.stope.fetch(stopePda(BALANCED));
+    assert.equal(stope.totalShares.toNumber(), 2 * ONE_BTC);
+    assert.equal(stope.totalDeposits.toNumber(), 2 * ONE_BTC);
+
+    const vault = await getAccount(
+      provider.connection,
+      aditVault,
+      undefined,
+      TOKEN_2022_PROGRAM_ID
+    );
+    assert.equal(Number(vault.amount), 2 * ONE_BTC);
+  });
 });
