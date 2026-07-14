@@ -595,4 +595,238 @@ describe("lodz_vault", () => {
     );
     assert.equal(Number(vault.amount), 2 * ONE_BTC);
   });
+
+  // -------------------------------------------------------------------------
+  // keeper
+  // -------------------------------------------------------------------------
+
+  it("refuses to book yield from an unbonded reporter", async () => {
+    await assert.isRejected(
+      program.methods
+        .accrueYield(SUSTAINABLE_SEAM, BALANCED, new BN(1_000_000))
+        .accountsPartial({
+          reporter: keeper.publicKey,
+          vaultConfig,
+          keeper: keeperPda(keeper.publicKey),
+          seam: seamPda(SUSTAINABLE_SEAM),
+          stope: stopePda(BALANCED),
+          adit,
+          assetMint: btcMint,
+          reporterToken: keeperBtc,
+          aditVault,
+          tokenProgram: TOKEN_2022_PROGRAM_ID,
+        })
+        .signers([keeper])
+        .rpc()
+    );
+  });
+
+  it("bonds a keeper", async () => {
+    await program.methods
+      .bondKeeper(new BN(5_000_000_000))
+      .accountsPartial({
+        keeperAuthority: keeper.publicKey,
+        vaultConfig,
+        keeper: keeperPda(keeper.publicKey),
+        lodzMint,
+        keeperToken: keeperLodz,
+        bondVault,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([keeper])
+      .rpc();
+
+    const record = await program.account.keeper.fetch(keeperPda(keeper.publicKey));
+    assert.isTrue(record.active);
+    assert.equal(record.bondedAmount.toNumber(), 5_000_000_000);
+
+    const config = await program.account.vaultConfig.fetch(vaultConfig);
+    assert.equal(config.keeperCount, 1);
+  });
+
+  // -------------------------------------------------------------------------
+  // the split that is the product
+  // -------------------------------------------------------------------------
+
+  it("books sustainable and emissions yield into separate accumulators", async () => {
+    await program.methods
+      .accrueYield(SUSTAINABLE_SEAM, BALANCED, new BN(3_000_000))
+      .accountsPartial({
+        reporter: keeper.publicKey,
+        vaultConfig,
+        keeper: keeperPda(keeper.publicKey),
+        seam: seamPda(SUSTAINABLE_SEAM),
+        stope: stopePda(BALANCED),
+        adit,
+        assetMint: btcMint,
+        reporterToken: keeperBtc,
+        aditVault,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
+      })
+      .signers([keeper])
+      .rpc();
+
+    await program.methods
+      .accrueYield(EMISSIONS_SEAM, BALANCED, new BN(7_000_000))
+      .accountsPartial({
+        reporter: keeper.publicKey,
+        vaultConfig,
+        keeper: keeperPda(keeper.publicKey),
+        seam: seamPda(EMISSIONS_SEAM),
+        stope: stopePda(BALANCED),
+        adit,
+        assetMint: btcMint,
+        reporterToken: keeperBtc,
+        aditVault,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
+      })
+      .signers([keeper])
+      .rpc();
+
+    const stope = await program.account.stope.fetch(stopePda(BALANCED));
+    assert.equal(stope.realizedSustainable.toNumber(), 3_000_000);
+    assert.equal(stope.realizedEmissions.toNumber(), 7_000_000);
+    assert.equal(
+      stope.totalDeposits.toNumber(),
+      2 * ONE_BTC + 10_000_000,
+      "yield becomes backing without minting shares"
+    );
+    assert.equal(stope.totalShares.toNumber(), 2 * ONE_BTC);
+
+    // Per seam, one kind only.
+    const sustainable = await program.account.seam.fetch(seamPda(SUSTAINABLE_SEAM));
+    const emissions = await program.account.seam.fetch(seamPda(EMISSIONS_SEAM));
+    assert.equal(sustainable.realizedYield.toNumber(), 3_000_000);
+    assert.equal(emissions.realizedYield.toNumber(), 7_000_000);
+    assert.deepEqual(sustainable.yieldKind, { sustainable: {} });
+    assert.deepEqual(emissions.yieldKind, { emissions: {} });
+  });
+
+  it("attributes a miner's growth to each source separately", async () => {
+    // A second deposit settles the position, which is when the indices are
+    // read into the miner's own two balances.
+    await program.methods
+      .deposit(BALANCED, new BN(1))
+      .accountsPartial({
+        depositor: alice.publicKey,
+        vaultConfig,
+        adit,
+        stope: stopePda(BALANCED),
+        miner: minerPda(alice.publicKey, BALANCED),
+        assetMint: btcMint,
+        depositorToken: aliceBtc,
+        aditVault,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([alice])
+      .rpc();
+
+    const miner = await program.account.miner.fetch(minerPda(alice.publicKey, BALANCED));
+    // Alice is the only depositor, so she is attributed all of it.
+    assert.equal(miner.accruedSustainable.toNumber(), 3_000_000);
+    assert.equal(miner.accruedEmissions.toNumber(), 7_000_000);
+    // And the two are never stored as one number.
+    assert.notEqual(miner.accruedSustainable.toNumber(), 10_000_000);
+  });
+
+  it("stops an expired emissions seam from booking any more yield", async () => {
+    // Register a seam whose schedule ends almost immediately, then wait it out.
+    await program.methods
+      .registerSeam(EXPIRING_SEAM, AGGRESSIVE, {
+        venue: ascii("test-expiring-venue", 32),
+        venueProgram: PublicKey.default,
+        yieldKind: { emissions: {} },
+        allocationBps: 1000,
+        riskTier: 5,
+        emissionEndsAt: new BN(now() + 3),
+        emissionMint: emissionMint,
+      })
+      .accountsPartial({
+        authority: authority.publicKey,
+        vaultConfig,
+        stope: stopePda(AGGRESSIVE),
+        assetMint: btcMint,
+        adit,
+        seam: seamPda(EXPIRING_SEAM),
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+
+    await new Promise((r) => setTimeout(r, 6000));
+
+    await assert.isRejected(
+      program.methods
+        .accrueYield(EXPIRING_SEAM, AGGRESSIVE, new BN(1_000))
+        .accountsPartial({
+          reporter: keeper.publicKey,
+          vaultConfig,
+          keeper: keeperPda(keeper.publicKey),
+          seam: seamPda(EXPIRING_SEAM),
+          stope: stopePda(AGGRESSIVE),
+          adit,
+          assetMint: btcMint,
+          reporterToken: keeperBtc,
+          aditVault,
+          tokenProgram: TOKEN_2022_PROGRAM_ID,
+        })
+        .signers([keeper])
+        .rpc(),
+      /EmissionEnded/
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // rebalancing
+  // -------------------------------------------------------------------------
+
+  it("lets only a bonded keeper move an allocation", async () => {
+    await assert.isRejected(
+      program.methods
+        .updateSeamAllocation(SUSTAINABLE_SEAM, BALANCED, 5000)
+        .accountsPartial({
+          keeperAuthority: alice.publicKey,
+          vaultConfig,
+          keeper: keeperPda(alice.publicKey),
+          seam: seamPda(SUSTAINABLE_SEAM),
+          stope: stopePda(BALANCED),
+        })
+        .signers([alice])
+        .rpc()
+    );
+
+    await program.methods
+      .updateSeamAllocation(SUSTAINABLE_SEAM, BALANCED, 7000)
+      .accountsPartial({
+        keeperAuthority: keeper.publicKey,
+        vaultConfig,
+        keeper: keeperPda(keeper.publicKey),
+        seam: seamPda(SUSTAINABLE_SEAM),
+        stope: stopePda(BALANCED),
+      })
+      .signers([keeper])
+      .rpc();
+
+    const stope = await program.account.stope.fetch(stopePda(BALANCED));
+    assert.equal(stope.allocatedBps, 10000);
+    assert.equal(stope.emissionsBps, 3000);
+  });
+
+  it("refuses a total allocation above one hundred percent", async () => {
+    await assert.isRejected(
+      program.methods
+        .updateSeamAllocation(SUSTAINABLE_SEAM, BALANCED, 7001)
+        .accountsPartial({
+          keeperAuthority: keeper.publicKey,
+          vaultConfig,
+          keeper: keeperPda(keeper.publicKey),
+          seam: seamPda(SUSTAINABLE_SEAM),
+          stope: stopePda(BALANCED),
+        })
+        .signers([keeper])
+        .rpc(),
+      /AllocationExceeded/
+    );
+  });
 });
