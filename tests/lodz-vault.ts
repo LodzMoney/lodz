@@ -829,4 +829,219 @@ describe("lodz_vault", () => {
       /AllocationExceeded/
     );
   });
+
+  // -------------------------------------------------------------------------
+  // the orecart
+  // -------------------------------------------------------------------------
+
+  it("issues a ticket that cannot be claimed early", async () => {
+    const ticket = orecartPda(alice.publicKey, 0);
+
+    await program.methods
+      .requestRedemption(BALANCED, 0, new BN(ONE_BTC))
+      .accountsPartial({
+        owner: alice.publicKey,
+        vaultConfig,
+        stope: stopePda(BALANCED),
+        miner: minerPda(alice.publicKey, BALANCED),
+        orecartQueue: queuePda(BALANCED),
+        orecart: ticket,
+        adit,
+        assetMint: btcMint,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([alice])
+      .rpc();
+
+    const record = await program.account.orecart.fetch(ticket);
+    assert.deepEqual(record.status, { queued: {} });
+    assert.equal(record.feeBps, 25);
+    assert.isAbove(record.claimableAt.toNumber(), record.requestedAt.toNumber());
+    // The payout includes the position's realized yield, because yield raised
+    // total_deposits rather than being held on the side.
+    assert.isAbove(record.grossAmount.toNumber(), ONE_BTC);
+    assert.equal(
+      record.grossAmount.toNumber() - record.payoutAmount.toNumber(),
+      record.feeAmount.toNumber()
+    );
+
+    // The shares are gone from the stope immediately.
+    const miner = await program.account.miner.fetch(minerPda(alice.publicKey, BALANCED));
+    assert.equal(miner.shares.toNumber(), ONE_BTC + 1);
+
+    await assert.isRejected(
+      program.methods
+        .claimRedemption(BALANCED, 0)
+        .accountsPartial({
+          owner: alice.publicKey,
+          vaultConfig,
+          stope: stopePda(BALANCED),
+          miner: minerPda(alice.publicKey, BALANCED),
+          orecart: ticket,
+          orecartQueue: queuePda(BALANCED),
+          adit,
+          assetMint: btcMint,
+          aditVault,
+          ownerToken: aliceBtc,
+          tokenProgram: TOKEN_2022_PROGRAM_ID,
+        })
+        .signers([alice])
+        .rpc(),
+      /RedemptionNotClaimable/
+    );
+  });
+
+  it("pays the ticket once its delay has elapsed, and only once", async () => {
+    const ticket = orecartPda(alice.publicKey, 0);
+    const record = await program.account.orecart.fetch(ticket);
+
+    const wait = record.claimableAt.toNumber() - now() + 2;
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait * 1000));
+
+    const before = await getAccount(
+      provider.connection,
+      aliceBtc,
+      undefined,
+      TOKEN_2022_PROGRAM_ID
+    );
+
+    await program.methods
+      .claimRedemption(BALANCED, 0)
+      .accountsPartial({
+        owner: alice.publicKey,
+        vaultConfig,
+        stope: stopePda(BALANCED),
+        miner: minerPda(alice.publicKey, BALANCED),
+        orecart: ticket,
+        orecartQueue: queuePda(BALANCED),
+        adit,
+        assetMint: btcMint,
+        aditVault,
+        ownerToken: aliceBtc,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
+      })
+      .signers([alice])
+      .rpc();
+
+    const after = await getAccount(
+      provider.connection,
+      aliceBtc,
+      undefined,
+      TOKEN_2022_PROGRAM_ID
+    );
+    assert.equal(
+      Number(after.amount) - Number(before.amount),
+      record.payoutAmount.toNumber()
+    );
+
+    const claimed = await program.account.orecart.fetch(ticket);
+    assert.deepEqual(claimed.status, { claimed: {} });
+
+    await assert.isRejected(
+      program.methods
+        .claimRedemption(BALANCED, 0)
+        .accountsPartial({
+          owner: alice.publicKey,
+          vaultConfig,
+          stope: stopePda(BALANCED),
+          miner: minerPda(alice.publicKey, BALANCED),
+          orecart: ticket,
+          orecartQueue: queuePda(BALANCED),
+          adit,
+          assetMint: btcMint,
+          aditVault,
+          ownerToken: aliceBtc,
+          tokenProgram: TOKEN_2022_PROGRAM_ID,
+        })
+        .signers([alice])
+        .rpc(),
+      /TicketAlreadyClaimed/
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // enforcement
+  // -------------------------------------------------------------------------
+
+  it("slashes a keeper and deactivates it when the bond falls short", async () => {
+    const before = await program.account.keeper.fetch(keeperPda(keeper.publicKey));
+
+    await program.methods
+      .slashKeeper(new BN(4_500_000_000), 1)
+      .accountsPartial({
+        authority: authority.publicKey,
+        vaultConfig,
+        keeperAuthority: keeper.publicKey,
+        keeper: keeperPda(keeper.publicKey),
+        lodzMint,
+        bondVault,
+        treasury,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .rpc();
+
+    const after = await program.account.keeper.fetch(keeperPda(keeper.publicKey));
+    assert.equal(
+      after.bondedAmount.toNumber(),
+      before.bondedAmount.toNumber() - 4_500_000_000
+    );
+    assert.equal(after.slashCount, 1);
+    assert.isFalse(after.active, "a bond below the minimum is not an active keeper");
+
+    const config = await program.account.vaultConfig.fetch(vaultConfig);
+    assert.equal(config.keeperCount, 0);
+
+    const treasuryAccount = await getAccount(provider.connection, treasury);
+    assert.equal(Number(treasuryAccount.amount), 4_500_000_000);
+  });
+
+  it("stops a slashed keeper from booking yield or rebalancing", async () => {
+    await assert.isRejected(
+      program.methods
+        .updateSeamAllocation(SUSTAINABLE_SEAM, BALANCED, 6000)
+        .accountsPartial({
+          keeperAuthority: keeper.publicKey,
+          vaultConfig,
+          keeper: keeperPda(keeper.publicKey),
+          seam: seamPda(SUSTAINABLE_SEAM),
+          stope: stopePda(BALANCED),
+        })
+        .signers([keeper])
+        .rpc(),
+      /KeeperNotActive/
+    );
+  });
+
+  it("keeps paying settled tickets while the vault is paused", async () => {
+    await program.methods
+      .pauseVault()
+      .accountsPartial({ authority: authority.publicKey, vaultConfig })
+      .rpc();
+
+    // A new deposit is refused ...
+    await assert.isRejected(
+      program.methods
+        .deposit(BALANCED, new BN(1_000))
+        .accountsPartial({
+          depositor: alice.publicKey,
+          vaultConfig,
+          adit,
+          stope: stopePda(BALANCED),
+          miner: minerPda(alice.publicKey, BALANCED),
+          assetMint: btcMint,
+          depositorToken: aliceBtc,
+          aditVault,
+          tokenProgram: TOKEN_2022_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([alice])
+        .rpc(),
+      /VaultPaused/
+    );
+
+    await program.methods
+      .unpauseVault()
+      .accountsPartial({ authority: authority.publicKey, vaultConfig })
+      .rpc();
+  });
 });
