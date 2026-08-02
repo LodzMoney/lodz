@@ -1,0 +1,4777 @@
+{
+  "address": "F9XmBYVEyEwFyHAdMJs6uBvyRag3AFhQ6YMZvqm13SLW",
+  "metadata": {
+    "name": "lodz_vault",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "LODZ vault: Adit onboarding, Seam registry, Stope vaults, Orecart redemption queue, keeper bond and slash"
+  },
+  "instructions": [
+    {
+      "name": "accept_authority",
+      "docs": [
+        "Accept a pending authority handover."
+      ],
+      "discriminator": [
+        107,
+        86,
+        198,
+        91,
+        33,
+        12,
+        107,
+        160
+      ],
+      "accounts": [
+        {
+          "name": "pending_authority",
+          "signer": true,
+          "relations": [
+            "vault_config"
+          ]
+        },
+        {
+          "name": "vault_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "accrue_yield",
+      "docs": [
+        "Book realized yield against one seam.",
+        "",
+        "The reporting keeper transfers `amount` of the seam's asset into",
+        "custody; the program attributes it to that seam's declared",
+        "[`state::YieldKind`] and to no other. Requires an active bond, and refuses",
+        "once an emissions seam's declared schedule has ended."
+      ],
+      "discriminator": [
+        243,
+        28,
+        81,
+        65,
+        175,
+        178,
+        5,
+        112
+      ],
+      "accounts": [
+        {
+          "name": "reporter",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "keeper",
+          "docs": [
+            "The reporter's bond. `active` is checked in the handler, so a keeper",
+            "whose bond has been slashed below the minimum stops being able to book",
+            "yield at all."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  107,
+                  101,
+                  101,
+                  112,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "reporter"
+              }
+            ]
+          }
+        },
+        {
+          "name": "seam",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  97,
+                  109
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "seam_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "stope",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  111,
+                  112,
+                  101
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "stope_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "adit",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  100,
+                  105,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "asset_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "asset_mint",
+          "relations": [
+            "adit"
+          ]
+        },
+        {
+          "name": "reporter_token",
+          "writable": true
+        },
+        {
+          "name": "adit_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  100,
+                  105,
+                  116,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "asset_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "seam_id",
+          "type": "u16"
+        },
+        {
+          "name": "stope_id",
+          "type": "u8"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "bond_keeper",
+      "docs": [
+        "Post or increase a $LODZ bond. Creates the caller's `Keeper` record on",
+        "first use."
+      ],
+      "discriminator": [
+        167,
+        101,
+        132,
+        208,
+        178,
+        36,
+        89,
+        88
+      ],
+      "accounts": [
+        {
+          "name": "keeper_authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "keeper",
+          "docs": [
+            "Created on first bond. The second of exactly two `init_if_needed`",
+            "accounts in the program. No `has_one` here: on the creating call the",
+            "account is still zeroed, and the PDA seed already binds it to the",
+            "signer."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  107,
+                  101,
+                  101,
+                  112,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "keeper_authority"
+              }
+            ]
+          }
+        },
+        {
+          "name": "lodz_mint",
+          "relations": [
+            "vault_config"
+          ]
+        },
+        {
+          "name": "keeper_token",
+          "writable": true
+        },
+        {
+          "name": "bond_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  111,
+                  110,
+                  100,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "claim_redemption",
+      "docs": [
+        "Pay out a ticket whose `claimable_at` has passed. Refuses before it."
+      ],
+      "discriminator": [
+        109,
+        110,
+        9,
+        188,
+        195,
+        217,
+        112,
+        83
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "miner",
+            "orecart"
+          ]
+        },
+        {
+          "name": "vault_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "stope",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  111,
+                  112,
+                  101
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "stope_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "miner",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "arg",
+                "path": "stope_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "orecart",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  101,
+                  99,
+                  97,
+                  114,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "arg",
+                "path": "ticket_index"
+              }
+            ]
+          }
+        },
+        {
+          "name": "orecart_queue",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  101,
+                  99,
+                  97,
+                  114,
+                  116,
+                  95,
+                  113,
+                  117,
+                  101,
+                  117,
+                  101
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "stope_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "adit",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  100,
+                  105,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "asset_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "asset_mint",
+          "relations": [
+            "orecart",
+            "adit"
+          ]
+        },
+        {
+          "name": "adit_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  100,
+                  105,
+                  116,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "asset_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner_token",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "stope_id",
+          "type": "u8"
+        },
+        {
+          "name": "ticket_index",
+          "type": "u32"
+        }
+      ]
+    },
+    {
+      "name": "deposit",
+      "docs": [
+        "Deposit a registered BTC representation into a stope and receive",
+        "shares. Creates the caller's `Miner` position on first use."
+      ],
+      "discriminator": [
+        242,
+        35,
+        198,
+        137,
+        82,
+        225,
+        242,
+        182
+      ],
+      "accounts": [
+        {
+          "name": "depositor",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "adit",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  100,
+                  105,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "asset_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "stope",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  111,
+                  112,
+                  101
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "stope_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "miner",
+          "docs": [
+            "Created on first deposit into this stope. This is one of exactly two",
+            "`init_if_needed` accounts in the program."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "depositor"
+              },
+              {
+                "kind": "arg",
+                "path": "stope_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "asset_mint",
+          "relations": [
+            "adit"
+          ]
+        },
+        {
+          "name": "depositor_token",
+          "writable": true
+        },
+        {
+          "name": "adit_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  100,
+                  105,
+                  116,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "asset_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "stope_id",
+          "type": "u8"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "initialize_bond_vault",
+      "docs": [
+        "Create `[\"bond_vault\"]`, the $LODZ token account keeper bonds are held",
+        "in. Split from `initialize_vault` because `init` on a token account is",
+        "stack-expensive."
+      ],
+      "discriminator": [
+        213,
+        20,
+        164,
+        192,
+        52,
+        221,
+        10,
+        191
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "vault_config"
+          ]
+        },
+        {
+          "name": "vault_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "lodz_mint",
+          "relations": [
+            "vault_config"
+          ]
+        },
+        {
+          "name": "bond_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  111,
+                  110,
+                  100,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize_vault",
+      "docs": [
+        "Create the global config PDA. The vault starts paused: no stope and no",
+        "adit exist yet, and a deposit against that state would be accepted",
+        "against nothing."
+      ],
+      "discriminator": [
+        48,
+        191,
+        163,
+        44,
+        71,
+        129,
+        63,
+        164
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "vault_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "lodz_mint"
+        },
+        {
+          "name": "treasury",
+          "docs": [
+            "$LODZ destination for slashed keeper bonds. Recorded now so",
+            "`slash_keeper` cannot be pointed at an arbitrary account later."
+          ]
+        },
+        {
+          "name": "lodz_token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "params",
+          "type": {
+            "defined": {
+              "name": "InitializeVaultParams"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "open_stope",
+      "docs": [
+        "Open one of the three stopes together with its redemption queue.",
+        "",
+        "`risk_profile` must be the canonical profile for `stope_id`",
+        "(0 conservative, 1 balanced, 2 aggressive); the program rejects any",
+        "other pairing so the id is a reliable key off-chain."
+      ],
+      "discriminator": [
+        8,
+        227,
+        96,
+        122,
+        151,
+        77,
+        132,
+        208
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "vault_config"
+          ]
+        },
+        {
+          "name": "vault_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "stope",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  111,
+                  112,
+                  101
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "stope_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "orecart_queue",
+          "docs": [
+            "The stope and its queue are created together: a stope that can take",
+            "deposits before its redemption queue exists is a stope you can get into",
+            "and not out of."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  101,
+                  99,
+                  97,
+                  114,
+                  116,
+                  95,
+                  113,
+                  117,
+                  101,
+                  117,
+                  101
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "stope_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "stope_id",
+          "type": "u8"
+        },
+        {
+          "name": "risk_profile",
+          "type": {
+            "defined": {
+              "name": "RiskProfile"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "pause_vault",
+      "docs": [
+        "Halt deposits, accrual, redemption requests and rebalances.",
+        "`claim_redemption` keeps running."
+      ],
+      "discriminator": [
+        250,
+        6,
+        228,
+        57,
+        6,
+        104,
+        19,
+        210
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "vault_config"
+          ]
+        },
+        {
+          "name": "vault_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "propose_authority",
+      "docs": [
+        "Nominate the next authority. Takes effect only once it signs",
+        "`accept_authority`."
+      ],
+      "discriminator": [
+        20,
+        148,
+        236,
+        198,
+        76,
+        119,
+        99,
+        142
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "vault_config"
+          ]
+        },
+        {
+          "name": "vault_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "new_authority",
+          "docs": [
+            "`accept_authority` before it takes effect."
+          ]
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "register_adit",
+      "docs": [
+        "Register a BTC representation and create its custody account.",
+        "",
+        "This is where the disclosure is fixed: the custody kind, the headlamp",
+        "risk tier, and the exact ratio at which this token is counted against",
+        "the internal accounting unit. A mint with no adit cannot be deposited."
+      ],
+      "discriminator": [
+        75,
+        90,
+        247,
+        183,
+        189,
+        124,
+        6,
+        2
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "vault_config"
+          ]
+        },
+        {
+          "name": "vault_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "asset_mint"
+        },
+        {
+          "name": "adit",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  100,
+                  105,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "asset_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "adit_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  100,
+                  105,
+                  116,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "asset_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "params",
+          "type": {
+            "defined": {
+              "name": "RegisterAditParams"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "register_seam",
+      "docs": [
+        "Register a yield source against a stope.",
+        "",
+        "An emissions seam must declare a future `emission_ends_at` and the mint",
+        "the emission is paid in. A sustainable seam must leave both unset. The",
+        "seam's risk tier and the stope's resulting emissions exposure are both",
+        "checked against the stope's risk profile."
+      ],
+      "discriminator": [
+        107,
+        147,
+        84,
+        175,
+        171,
+        143,
+        170,
+        18
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "vault_config"
+          ]
+        },
+        {
+          "name": "vault_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "stope",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  111,
+                  112,
+                  101
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "stope_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "asset_mint",
+          "relations": [
+            "adit"
+          ]
+        },
+        {
+          "name": "adit",
+          "docs": [
+            "A seam can only deploy an asset LODZ actually accepts. Requiring the",
+            "adit here is what keeps the registry a connected graph rather than two",
+            "lists that happen to mention the same mint."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  100,
+                  105,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "asset_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "seam",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  97,
+                  109
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "seam_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "seam_id",
+          "type": "u16"
+        },
+        {
+          "name": "stope_id",
+          "type": "u8"
+        },
+        {
+          "name": "params",
+          "type": {
+            "defined": {
+              "name": "RegisterSeamParams"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "request_redemption",
+      "docs": [
+        "Burn shares and issue an Orecart ticket.",
+        "",
+        "`ticket_index` must equal the caller's current `Miner::ticket_count`;",
+        "it is the third PDA seed of the ticket. The fee and the wait are",
+        "computed and frozen onto the ticket here."
+      ],
+      "discriminator": [
+        14,
+        62,
+        182,
+        237,
+        59,
+        79,
+        149,
+        22
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "miner"
+          ]
+        },
+        {
+          "name": "vault_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "stope",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  111,
+                  112,
+                  101
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "stope_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "miner",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  105,
+                  110,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "arg",
+                "path": "stope_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "orecart_queue",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  101,
+                  99,
+                  97,
+                  114,
+                  116,
+                  95,
+                  113,
+                  117,
+                  101,
+                  117,
+                  101
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "stope_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "orecart",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  111,
+                  114,
+                  101,
+                  99,
+                  97,
+                  114,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "arg",
+                "path": "ticket_index"
+              }
+            ]
+          }
+        },
+        {
+          "name": "adit",
+          "docs": [
+            "The asset this ticket will pay out in. It does not have to be the asset",
+            "the depositor put in: the vault keeps its books in internal accounting",
+            "units, so any registered adit can settle a ticket, subject to that",
+            "asset's custody account holding enough at claim time."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  100,
+                  105,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "asset_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "asset_mint",
+          "relations": [
+            "adit"
+          ]
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "stope_id",
+          "type": "u8"
+        },
+        {
+          "name": "ticket_index",
+          "type": "u32"
+        },
+        {
+          "name": "shares",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "slash_keeper",
+      "docs": [
+        "Take a keeper's bond. Authority only; the taken amount moves to the",
+        "treasury recorded at initialization, and the keeper deactivates",
+        "automatically if the slash drops it below the minimum bond."
+      ],
+      "discriminator": [
+        203,
+        194,
+        54,
+        26,
+        207,
+        45,
+        134,
+        40
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "vault_config"
+          ]
+        },
+        {
+          "name": "vault_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "keeper_authority",
+          "docs": [
+            "record's own `authority` field is compared against it below."
+          ]
+        },
+        {
+          "name": "keeper",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  107,
+                  101,
+                  101,
+                  112,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "keeper_authority"
+              }
+            ]
+          }
+        },
+        {
+          "name": "lodz_mint",
+          "relations": [
+            "vault_config"
+          ]
+        },
+        {
+          "name": "bond_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  111,
+                  110,
+                  100,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "reason_code",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "unbond_keeper",
+      "docs": [
+        "Withdraw bond, no earlier than `keeper_unbond_cooldown_sec` after the",
+        "keeper's last rebalance."
+      ],
+      "discriminator": [
+        228,
+        117,
+        181,
+        66,
+        56,
+        0,
+        45,
+        37
+      ],
+      "accounts": [
+        {
+          "name": "keeper_authority",
+          "signer": true
+        },
+        {
+          "name": "vault_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "keeper",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  107,
+                  101,
+                  101,
+                  112,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "keeper_authority"
+              }
+            ]
+          }
+        },
+        {
+          "name": "lodz_mint",
+          "relations": [
+            "vault_config"
+          ]
+        },
+        {
+          "name": "keeper_token",
+          "writable": true
+        },
+        {
+          "name": "bond_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  111,
+                  110,
+                  100,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "unpause_vault",
+      "docs": [
+        "Resume."
+      ],
+      "discriminator": [
+        125,
+        29,
+        213,
+        213,
+        114,
+        155,
+        125,
+        63
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "vault_config"
+          ]
+        },
+        {
+          "name": "vault_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "update_seam_allocation",
+      "docs": [
+        "Move a seam's allocation. Requires an active bonded keeper, and",
+        "re-checks the stope's 100 % ceiling and its emissions ceiling."
+      ],
+      "discriminator": [
+        251,
+        63,
+        153,
+        43,
+        231,
+        226,
+        184,
+        41
+      ],
+      "accounts": [
+        {
+          "name": "keeper_authority",
+          "signer": true
+        },
+        {
+          "name": "vault_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "keeper",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  107,
+                  101,
+                  101,
+                  112,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "keeper_authority"
+              }
+            ]
+          }
+        },
+        {
+          "name": "seam",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  97,
+                  109
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "seam_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "stope",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  111,
+                  112,
+                  101
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "stope_id"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "seam_id",
+          "type": "u16"
+        },
+        {
+          "name": "stope_id",
+          "type": "u8"
+        },
+        {
+          "name": "new_allocation_bps",
+          "type": "u16"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Adit",
+      "discriminator": [
+        34,
+        70,
+        251,
+        75,
+        168,
+        37,
+        97,
+        37
+      ]
+    },
+    {
+      "name": "Keeper",
+      "discriminator": [
+        127,
+        221,
+        194,
+        46,
+        120,
+        73,
+        144,
+        77
+      ]
+    },
+    {
+      "name": "Miner",
+      "discriminator": [
+        223,
+        113,
+        15,
+        54,
+        123,
+        122,
+        140,
+        100
+      ]
+    },
+    {
+      "name": "Orecart",
+      "discriminator": [
+        117,
+        212,
+        55,
+        220,
+        147,
+        80,
+        222,
+        151
+      ]
+    },
+    {
+      "name": "OrecartQueue",
+      "discriminator": [
+        13,
+        102,
+        211,
+        124,
+        146,
+        63,
+        150,
+        178
+      ]
+    },
+    {
+      "name": "Seam",
+      "discriminator": [
+        234,
+        92,
+        165,
+        147,
+        32,
+        196,
+        250,
+        182
+      ]
+    },
+    {
+      "name": "Stope",
+      "discriminator": [
+        61,
+        222,
+        186,
+        171,
+        127,
+        246,
+        250,
+        229
+      ]
+    },
+    {
+      "name": "VaultConfig",
+      "discriminator": [
+        99,
+        86,
+        43,
+        216,
+        184,
+        102,
+        119,
+        77
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "AditRegistered",
+      "discriminator": [
+        241,
+        167,
+        101,
+        63,
+        63,
+        145,
+        231,
+        122
+      ]
+    },
+    {
+      "name": "AuthorityTransferAccepted",
+      "discriminator": [
+        149,
+        165,
+        140,
+        221,
+        104,
+        203,
+        239,
+        121
+      ]
+    },
+    {
+      "name": "AuthorityTransferProposed",
+      "discriminator": [
+        103,
+        244,
+        27,
+        116,
+        177,
+        4,
+        100,
+        119
+      ]
+    },
+    {
+      "name": "BondVaultInitialized",
+      "discriminator": [
+        249,
+        142,
+        183,
+        185,
+        128,
+        77,
+        121,
+        114
+      ]
+    },
+    {
+      "name": "Deposit",
+      "discriminator": [
+        62,
+        205,
+        242,
+        175,
+        244,
+        169,
+        136,
+        52
+      ]
+    },
+    {
+      "name": "KeeperBonded",
+      "discriminator": [
+        253,
+        175,
+        66,
+        79,
+        226,
+        84,
+        206,
+        204
+      ]
+    },
+    {
+      "name": "KeeperSlashed",
+      "discriminator": [
+        40,
+        75,
+        247,
+        92,
+        165,
+        86,
+        81,
+        28
+      ]
+    },
+    {
+      "name": "KeeperUnbonded",
+      "discriminator": [
+        51,
+        104,
+        178,
+        109,
+        195,
+        218,
+        72,
+        209
+      ]
+    },
+    {
+      "name": "RedemptionClaimed",
+      "discriminator": [
+        107,
+        251,
+        199,
+        213,
+        59,
+        173,
+        53,
+        189
+      ]
+    },
+    {
+      "name": "RedemptionRequested",
+      "discriminator": [
+        245,
+        155,
+        98,
+        131,
+        210,
+        25,
+        137,
+        146
+      ]
+    },
+    {
+      "name": "SeamRebalanced",
+      "discriminator": [
+        118,
+        150,
+        26,
+        213,
+        216,
+        96,
+        144,
+        89
+      ]
+    },
+    {
+      "name": "SeamRegistered",
+      "discriminator": [
+        143,
+        154,
+        39,
+        24,
+        185,
+        17,
+        225,
+        245
+      ]
+    },
+    {
+      "name": "StopeOpened",
+      "discriminator": [
+        19,
+        200,
+        164,
+        113,
+        240,
+        74,
+        217,
+        103
+      ]
+    },
+    {
+      "name": "VaultInitialized",
+      "discriminator": [
+        180,
+        43,
+        207,
+        2,
+        18,
+        71,
+        3,
+        75
+      ]
+    },
+    {
+      "name": "VaultPauseChanged",
+      "discriminator": [
+        60,
+        211,
+        15,
+        230,
+        20,
+        200,
+        83,
+        133
+      ]
+    },
+    {
+      "name": "YieldAccrued",
+      "discriminator": [
+        195,
+        121,
+        41,
+        184,
+        183,
+        9,
+        52,
+        221
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "Unauthorized",
+      "msg": "Signer is not the vault authority."
+    },
+    {
+      "code": 6001,
+      "name": "NoPendingAuthority",
+      "msg": "No authority transfer is pending."
+    },
+    {
+      "code": 6002,
+      "name": "NotPendingAuthority",
+      "msg": "Signer is not the pending authority."
+    },
+    {
+      "code": 6003,
+      "name": "VaultPaused",
+      "msg": "The vault is paused."
+    },
+    {
+      "code": 6004,
+      "name": "VaultNotPaused",
+      "msg": "The vault is not paused."
+    },
+    {
+      "code": 6005,
+      "name": "StopePaused",
+      "msg": "This stope is paused."
+    },
+    {
+      "code": 6006,
+      "name": "AditPaused",
+      "msg": "This adit is paused."
+    },
+    {
+      "code": 6007,
+      "name": "MathOverflow",
+      "msg": "Arithmetic overflow."
+    },
+    {
+      "code": 6008,
+      "name": "DivisionByZero",
+      "msg": "Division by zero."
+    },
+    {
+      "code": 6009,
+      "name": "ZeroAmount",
+      "msg": "Amount must be greater than zero."
+    },
+    {
+      "code": 6010,
+      "name": "InvalidFeeBps",
+      "msg": "Fee exceeds the hard cap enforced by the program."
+    },
+    {
+      "code": 6011,
+      "name": "InvalidDelay",
+      "msg": "Redemption delay is outside the bounds enforced by the program."
+    },
+    {
+      "code": 6012,
+      "name": "InvalidQueueDrain",
+      "msg": "Queue drain rate must be greater than zero."
+    },
+    {
+      "code": 6013,
+      "name": "InvalidMinKeeperBond",
+      "msg": "Minimum keeper bond must be greater than zero."
+    },
+    {
+      "code": 6014,
+      "name": "InvalidConversionRatio",
+      "msg": "Conversion ratio numerator and denominator must both be non-zero."
+    },
+    {
+      "code": 6015,
+      "name": "InvalidDecimals",
+      "msg": "Mint decimals exceed the supported range."
+    },
+    {
+      "code": 6016,
+      "name": "InvalidLabel",
+      "msg": "Label is empty or not NUL-padded ASCII."
+    },
+    {
+      "code": 6017,
+      "name": "InvalidVenueName",
+      "msg": "Venue name is empty or not NUL-padded ASCII."
+    },
+    {
+      "code": 6018,
+      "name": "InvalidRiskTier",
+      "msg": "Risk tier is outside the 1..=5 headlamp range."
+    },
+    {
+      "code": 6019,
+      "name": "InvalidStopeId",
+      "msg": "Stope id must be 0 (conservative), 1 (balanced) or 2 (aggressive)."
+    },
+    {
+      "code": 6020,
+      "name": "RiskProfileMismatch",
+      "msg": "Risk profile does not match the canonical profile for this stope id."
+    },
+    {
+      "code": 6021,
+      "name": "RiskTierExceedsStopeProfile",
+      "msg": "This seam's risk tier is above what this stope's risk profile permits."
+    },
+    {
+      "code": 6022,
+      "name": "NoSharesOutstanding",
+      "msg": "The stope holds no shares, so there is nothing to distribute yield to."
+    },
+    {
+      "code": 6023,
+      "name": "InvalidAllocationBps",
+      "msg": "Allocation basis points exceed 10000."
+    },
+    {
+      "code": 6024,
+      "name": "AllocationExceeded",
+      "msg": "Total seam allocation for this stope would exceed 10000 basis points."
+    },
+    {
+      "code": 6025,
+      "name": "EmissionEndMissing",
+      "msg": "Emissions-backed seams must declare a future emission_ends_at."
+    },
+    {
+      "code": 6026,
+      "name": "EmissionEndInPast",
+      "msg": "emission_ends_at is in the past."
+    },
+    {
+      "code": 6027,
+      "name": "EmissionFieldsOnSustainableSeam",
+      "msg": "A sustainable seam must leave emission_ends_at and emission_mint unset."
+    },
+    {
+      "code": 6028,
+      "name": "EmissionMintMissing",
+      "msg": "Emissions-backed seams must name the mint the emission is paid in."
+    },
+    {
+      "code": 6029,
+      "name": "EmissionEnded",
+      "msg": "This seam's emission window has ended; it can no longer accrue yield."
+    },
+    {
+      "code": 6030,
+      "name": "EmissionsAllocationExceeded",
+      "msg": "Emissions allocation would exceed what this stope's risk profile permits."
+    },
+    {
+      "code": 6031,
+      "name": "SeamInactive",
+      "msg": "The seam is not active."
+    },
+    {
+      "code": 6032,
+      "name": "SeamStopeMismatch",
+      "msg": "The seam does not belong to the supplied stope."
+    },
+    {
+      "code": 6033,
+      "name": "SeamAssetMismatch",
+      "msg": "The seam's asset mint does not match the supplied adit."
+    },
+    {
+      "code": 6034,
+      "name": "AditMintMismatch",
+      "msg": "The adit does not accept this mint."
+    },
+    {
+      "code": 6035,
+      "name": "AditVaultMismatch",
+      "msg": "The supplied vault is not the vault recorded on this adit."
+    },
+    {
+      "code": 6036,
+      "name": "DepositCapExceeded",
+      "msg": "Deposit would exceed this adit's cap."
+    },
+    {
+      "code": 6037,
+      "name": "DepositBelowMinimum",
+      "msg": "Deposit is too small to credit a single accounting unit."
+    },
+    {
+      "code": 6038,
+      "name": "TokenProgramMismatch",
+      "msg": "The token program does not match the one pinned at registration."
+    },
+    {
+      "code": 6039,
+      "name": "InsufficientShares",
+      "msg": "Requested shares exceed the miner's balance."
+    },
+    {
+      "code": 6040,
+      "name": "TicketIndexMismatch",
+      "msg": "Ticket index does not match the miner's next ticket index."
+    },
+    {
+      "code": 6041,
+      "name": "TicketAlreadyClaimed",
+      "msg": "This ticket has already been claimed."
+    },
+    {
+      "code": 6042,
+      "name": "RedemptionNotClaimable",
+      "msg": "The redemption delay has not elapsed yet."
+    },
+    {
+      "code": 6043,
+      "name": "QueueStopeMismatch",
+      "msg": "The queue does not belong to the supplied stope."
+    },
+    {
+      "code": 6044,
+      "name": "TicketStopeMismatch",
+      "msg": "The ticket does not belong to the supplied stope."
+    },
+    {
+      "code": 6045,
+      "name": "ZeroPayout",
+      "msg": "Redemption resolves to a zero payout after fees."
+    },
+    {
+      "code": 6046,
+      "name": "InsufficientVaultLiquidity",
+      "msg": "The adit vault does not hold enough of this asset to settle the ticket."
+    },
+    {
+      "code": 6047,
+      "name": "KeeperNotActive",
+      "msg": "The keeper is not active."
+    },
+    {
+      "code": 6048,
+      "name": "KeeperBondTooSmall",
+      "msg": "Bond is below the minimum required to be an active keeper."
+    },
+    {
+      "code": 6049,
+      "name": "KeeperAuthorityMismatch",
+      "msg": "The keeper record does not belong to the supplied authority."
+    },
+    {
+      "code": 6050,
+      "name": "KeeperUnbondCooldown",
+      "msg": "The keeper unbond cooldown has not elapsed since its last rebalance."
+    },
+    {
+      "code": 6051,
+      "name": "InsufficientBond",
+      "msg": "Requested amount exceeds the keeper's bonded balance."
+    },
+    {
+      "code": 6052,
+      "name": "TreasuryMismatch",
+      "msg": "The supplied treasury does not match the one recorded in the config."
+    }
+  ],
+  "types": [
+    {
+      "name": "Adit",
+      "docs": [
+        "A registered BTC representation and its custody vault."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "asset_mint",
+            "docs": [
+              "The SPL Token or Token-2022 mint accepted here."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "token_program",
+            "docs": [
+              "Token program that owns `asset_mint`, pinned at registration.",
+              "",
+              "A BTC representation may be a classic SPL Token mint or a Token-2022",
+              "mint. Every transfer on the deposit and payout paths re-checks the",
+              "supplied token program against this field, which is what makes it",
+              "impossible to route a Token-2022 mint through the classic program (the",
+              "`AccountOwnedByWrongProgram` failure in",
+              "new_project_guide/references/solana/anchor-lessons.md)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "vault",
+            "docs": [
+              "`[\"adit_vault\", asset_mint]` -- the program-owned custody token",
+              "account for this asset, whose authority is the `VaultConfig` PDA."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "conversion_num",
+            "docs": [
+              "Conversion into internal accounting units:",
+              "`normalized = floor(amount * conversion_num / conversion_den)`.",
+              "",
+              "Folds two things together, both fixed by the authority at registration:",
+              "the decimal difference between `decimals` and the internal 8-decimal",
+              "unit, and the asset's declared ratio to one BTC. A representation that",
+              "is not 1:1 with BTC is expressed here rather than being quietly counted",
+              "as if it were."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "conversion_den",
+            "type": "u64"
+          },
+          {
+            "name": "deposit_cap",
+            "docs": [
+              "Hard cap on `total_deposited`, in the asset's native units. Zero means",
+              "no cap."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "total_deposited",
+            "docs": [
+              "Native units currently custodied for this asset."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "total_normalized",
+            "docs": [
+              "Internal accounting units credited against this asset over its",
+              "lifetime. Never decreases; `total_deposited` does."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "registered_at",
+            "type": "i64"
+          },
+          {
+            "name": "label",
+            "docs": [
+              "Short NUL-padded ASCII label, e.g. `zBTC`. For indexers and logs; the",
+              "mint is the identity."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "custody_kind",
+            "docs": [
+              "What the depositor is actually exposed to. See [`CustodyKind`]: every",
+              "variant is a token on Solana standing in for bitcoin held elsewhere,",
+              "never bitcoin on the Bitcoin network itself."
+            ],
+            "type": {
+              "defined": {
+                "name": "CustodyKind"
+              }
+            }
+          },
+          {
+            "name": "risk_tier",
+            "docs": [
+              "Headlamp tier, 1 (lowest) to 5 (highest)."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "decimals",
+            "docs": [
+              "Decimals of `asset_mint`, cached so the payout path can pass them to",
+              "`transfer_checked` without deserializing the mint twice."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "paused",
+            "docs": [
+              "Blocks new deposits through this adit. Redemptions of assets already",
+              "custodied here continue to settle."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "_padding",
+            "type": {
+              "array": [
+                "u8",
+                3
+              ]
+            }
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "AditRegistered",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "adit",
+            "type": "pubkey"
+          },
+          {
+            "name": "asset_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "token_program",
+            "type": "pubkey"
+          },
+          {
+            "name": "label",
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "custody_kind",
+            "type": {
+              "defined": {
+                "name": "CustodyKind"
+              }
+            }
+          },
+          {
+            "name": "risk_tier",
+            "type": "u8"
+          },
+          {
+            "name": "decimals",
+            "type": "u8"
+          },
+          {
+            "name": "conversion_num",
+            "type": "u64"
+          },
+          {
+            "name": "conversion_den",
+            "type": "u64"
+          },
+          {
+            "name": "deposit_cap",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AuthorityTransferAccepted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault_config",
+            "type": "pubkey"
+          },
+          {
+            "name": "previous_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AuthorityTransferProposed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault_config",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "pending_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "BondVaultInitialized",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault_config",
+            "type": "pubkey"
+          },
+          {
+            "name": "bond_vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "lodz_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CustodyKind",
+      "docs": [
+        "What kind of claim a deposited token actually is.",
+        "",
+        "No variant here is bitcoin on the Bitcoin network. A deposit into LODZ is a",
+        "deposit of an SPL or Token-2022 token that stands in for bitcoin held",
+        "somewhere else, and the variant records which \"somewhere else\" the",
+        "depositor is exposed to."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "BridgeMinted"
+          },
+          {
+            "name": "CustodianRedeemable"
+          },
+          {
+            "name": "SyntheticExposure"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Deposit",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "miner",
+            "type": "pubkey"
+          },
+          {
+            "name": "stope_id",
+            "type": "u8"
+          },
+          {
+            "name": "adit",
+            "type": "pubkey"
+          },
+          {
+            "name": "asset_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "docs": [
+              "What the depositor actually transferred, in the asset's native units."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "normalized_amount",
+            "docs": [
+              "What it was worth in internal accounting units."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "shares_minted",
+            "type": "u64"
+          },
+          {
+            "name": "miner_shares",
+            "type": "u64"
+          },
+          {
+            "name": "stope_total_shares",
+            "type": "u64"
+          },
+          {
+            "name": "stope_total_deposits",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "InitializeVaultParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "fee_bps",
+            "docs": [
+              "Redemption fee in basis points. Bounded by `MAX_FEE_BPS`."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "redemption_delay_sec",
+            "docs": [
+              "Base wait stamped on every Orecart ticket."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "max_redemption_delay_sec",
+            "docs": [
+              "Ceiling on base + congestion."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "queue_drain_per_day",
+            "docs": [
+              "Internal accounting units the protocol commits to settling per day."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "min_keeper_bond",
+            "docs": [
+              "Minimum $LODZ bond for a keeper to count as active."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "keeper_unbond_cooldown_sec",
+            "docs": [
+              "How long after its last rebalance a keeper must wait to unbond."
+            ],
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Keeper",
+      "docs": [
+        "A keeper's bond and its record."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "docs": [
+              "The keeper's signing key, and the second seed of this PDA."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "bonded_amount",
+            "docs": [
+              "$LODZ currently bonded, held in `[\"bond_vault\"]`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "slashed_amount",
+            "docs": [
+              "$LODZ taken by slashes over this keeper's lifetime."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "rebalance_count",
+            "type": "u64"
+          },
+          {
+            "name": "bonded_at",
+            "type": "i64"
+          },
+          {
+            "name": "last_rebalance_at",
+            "type": "i64"
+          },
+          {
+            "name": "unbond_ready_at",
+            "docs": [
+              "Earliest time this keeper may withdraw bond.",
+              "",
+              "Recomputed as `last_rebalance_at + keeper_unbond_cooldown_sec` on every",
+              "rebalance, so a keeper cannot make a bad reallocation and withdraw its",
+              "bond before the consequences of it are visible."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "slash_count",
+            "type": "u32"
+          },
+          {
+            "name": "active",
+            "docs": [
+              "True while `bonded_amount >= VaultConfig::min_keeper_bond`. Maintained",
+              "on every bond, unbond and slash."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "_padding",
+            "type": {
+              "array": [
+                "u8",
+                2
+              ]
+            }
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "KeeperBonded",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "keeper",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "bonded_amount",
+            "type": "u64"
+          },
+          {
+            "name": "active",
+            "type": "bool"
+          },
+          {
+            "name": "keeper_count",
+            "type": "u16"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "KeeperSlashed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "keeper",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "slashed_by",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "bonded_amount",
+            "type": "u64"
+          },
+          {
+            "name": "slash_count",
+            "type": "u32"
+          },
+          {
+            "name": "reason_code",
+            "docs": [
+              "Free-form reason code recorded on-chain so a slash can be argued about",
+              "with a reference rather than from memory."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "active",
+            "type": "bool"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "KeeperUnbonded",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "keeper",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "bonded_amount",
+            "type": "u64"
+          },
+          {
+            "name": "active",
+            "type": "bool"
+          },
+          {
+            "name": "keeper_count",
+            "type": "u16"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Miner",
+      "docs": [
+        "A depositor's principal claim and their two separate yield balances.",
+        "",
+        "The per-source split runs all the way down to here. A miner can read how",
+        "much of their own accrued yield came from something a counterparty is",
+        "paying versus from an emission schedule with an end date, which is the",
+        "number that decides whether the position is worth keeping."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "stope_id",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "ticket_count",
+            "docs": [
+              "Next Orecart ticket index for this position. Ticket PDAs are",
+              "`[\"orecart\", owner, ticket_index(u32 LE)]`, so this is the counter the",
+              "client must read before building a redemption transaction."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "shares",
+            "docs": [
+              "Principal claim on the stope, in shares. One share is one internal",
+              "accounting unit of principal at the time it was deposited."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "deposited",
+            "docs": [
+              "Lifetime internal units deposited."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "withdrawn",
+            "docs": [
+              "Lifetime internal units paid out through claimed tickets."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "pending_redemption",
+            "docs": [
+              "Internal units sitting in this miner's queued, unclaimed tickets.",
+              "",
+              "Shares are burned at request time, not at claim time, so this is not a",
+              "reservation against `shares` -- it is principal that has already left",
+              "the share pool and is waiting out its delay. A miner in the queue stops",
+              "earning yield the moment they queue, which is the honest reading of a",
+              "redemption request."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "accrued_sustainable",
+            "docs": [
+              "Settled sustainable yield, in internal accounting units."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "accrued_emissions",
+            "docs": [
+              "Settled emissions yield, in internal accounting units."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "claimed_sustainable",
+            "type": "u64"
+          },
+          {
+            "name": "claimed_emissions",
+            "type": "u64"
+          },
+          {
+            "name": "index_snapshot_sustainable",
+            "docs": [
+              "Stope index values at the last settlement of this position."
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "index_snapshot_emissions",
+            "type": "u128"
+          },
+          {
+            "name": "first_deposit_at",
+            "type": "i64"
+          },
+          {
+            "name": "last_action_at",
+            "type": "i64"
+          },
+          {
+            "name": "_padding",
+            "type": {
+              "array": [
+                "u8",
+                2
+              ]
+            }
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "Orecart",
+      "docs": [
+        "One redemption ticket. Immutable after issue except for its claim fields."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "asset_mint",
+            "docs": [
+              "Asset this ticket pays out in, fixed at request time."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "ticket_index",
+            "docs": [
+              "Index within the owner's tickets. Part of the PDA seed."
+            ],
+            "type": "u32"
+          },
+          {
+            "name": "stope_id",
+            "type": "u8"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "TicketStatus"
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "fee_bps",
+            "docs": [
+              "Fee rate captured at request time, so a later fee change by the",
+              "authority cannot be applied retroactively to a ticket already in the",
+              "queue."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "shares_burned",
+            "docs": [
+              "Shares burned to open this ticket. They are gone from the stope's share",
+              "pool already; this field is the record, not a reservation."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "normalized_amount",
+            "docs": [
+              "Principal owed, in internal accounting units, before the fee."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "fee_normalized",
+            "docs": [
+              "Fee, in internal accounting units."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "gross_amount",
+            "docs": [
+              "`normalized_amount` converted into the asset's native units."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "fee_amount",
+            "docs": [
+              "Fee in native units: `gross_amount - payout_amount`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "payout_amount",
+            "docs": [
+              "What `claim_redemption` transfers, in native units."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "queue_position",
+            "docs": [
+              "Position in the stope's issue order."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "requested_at",
+            "type": "i64"
+          },
+          {
+            "name": "claimable_at",
+            "docs": [
+              "The chain-enforced gate. `claim_redemption` requires",
+              "`Clock::get()?.unix_timestamp >= claimable_at`."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "claimed_at",
+            "type": "i64"
+          },
+          {
+            "name": "_padding",
+            "type": {
+              "array": [
+                "u8",
+                7
+              ]
+            }
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "OrecartQueue",
+      "docs": [
+        "Per-stope queue aggregate."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "stope_id",
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "head",
+            "docs": [
+              "Tickets claimed so far. Because tickets settle independently this is a",
+              "count, not a pointer into an ordered list."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "tail",
+            "docs": [
+              "Tickets issued so far. The next ticket's `queue_position`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "pending_tickets",
+            "docs": [
+              "`tail - head`, maintained rather than derived so a reader sees it in",
+              "one field."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "total_pending",
+            "docs": [
+              "Internal units awaiting claim. This is the backlog the congestion term",
+              "in `math::queue_delay_sec` is computed against."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "total_claimed",
+            "docs": [
+              "Internal units paid out over the queue's lifetime."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "total_fees",
+            "docs": [
+              "Internal units retained as redemption fees."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "last_request_at",
+            "type": "i64"
+          },
+          {
+            "name": "last_claim_at",
+            "type": "i64"
+          },
+          {
+            "name": "_padding",
+            "type": {
+              "array": [
+                "u8",
+                6
+              ]
+            }
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "RedemptionClaimed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "orecart",
+            "type": "pubkey"
+          },
+          {
+            "name": "ticket_index",
+            "type": "u32"
+          },
+          {
+            "name": "stope_id",
+            "type": "u8"
+          },
+          {
+            "name": "asset_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "payout_amount",
+            "type": "u64"
+          },
+          {
+            "name": "fee_amount",
+            "type": "u64"
+          },
+          {
+            "name": "normalized_amount",
+            "type": "u64"
+          },
+          {
+            "name": "waited_sec",
+            "docs": [
+              "How long the depositor actually waited, in seconds."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "queue_total_pending",
+            "type": "u64"
+          },
+          {
+            "name": "claimed_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RedemptionRequested",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "orecart",
+            "type": "pubkey"
+          },
+          {
+            "name": "ticket_index",
+            "type": "u32"
+          },
+          {
+            "name": "stope_id",
+            "type": "u8"
+          },
+          {
+            "name": "asset_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "shares_burned",
+            "type": "u64"
+          },
+          {
+            "name": "normalized_amount",
+            "type": "u64"
+          },
+          {
+            "name": "fee_bps",
+            "type": "u16"
+          },
+          {
+            "name": "fee_normalized",
+            "type": "u64"
+          },
+          {
+            "name": "gross_amount",
+            "type": "u64"
+          },
+          {
+            "name": "payout_amount",
+            "type": "u64"
+          },
+          {
+            "name": "queue_position",
+            "type": "u64"
+          },
+          {
+            "name": "queue_pending_ahead",
+            "docs": [
+              "Backlog standing in front of this ticket when it was issued."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "requested_at",
+            "type": "i64"
+          },
+          {
+            "name": "claimable_at",
+            "docs": [
+              "The enforced gate, not an estimate."
+            ],
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RegisterAditParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "label",
+            "docs": [
+              "NUL-padded ASCII, e.g. `zBTC`."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                16
+              ]
+            }
+          },
+          {
+            "name": "custody_kind",
+            "docs": [
+              "What the depositor is exposed to. None of the variants is native",
+              "bitcoin."
+            ],
+            "type": {
+              "defined": {
+                "name": "CustodyKind"
+              }
+            }
+          },
+          {
+            "name": "risk_tier",
+            "docs": [
+              "Headlamp tier, 1..=5."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "conversion_num",
+            "docs": [
+              "`normalized = floor(amount * conversion_num / conversion_den)`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "conversion_den",
+            "type": "u64"
+          },
+          {
+            "name": "deposit_cap",
+            "docs": [
+              "Cap on native units custodied here. Zero means uncapped."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RegisterSeamParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "venue",
+            "docs": [
+              "NUL-padded ASCII venue name."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "venue_program",
+            "docs": [
+              "Venue program, or `Pubkey::default()` when the venue is not a Solana",
+              "program."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "yield_kind",
+            "type": {
+              "defined": {
+                "name": "YieldKind"
+              }
+            }
+          },
+          {
+            "name": "allocation_bps",
+            "type": "u16"
+          },
+          {
+            "name": "risk_tier",
+            "type": "u8"
+          },
+          {
+            "name": "emission_ends_at",
+            "docs": [
+              "Required non-zero and in the future for `YieldKind::Emissions`,",
+              "required zero for `YieldKind::Sustainable`."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "emission_mint",
+            "docs": [
+              "Required set for `YieldKind::Emissions`, required default for",
+              "`YieldKind::Sustainable`."
+            ],
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RiskProfile",
+      "docs": [
+        "Risk appetite of a stope. Fixed to the stope id: 0 conservative,",
+        "1 balanced, 2 aggressive."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Conservative"
+          },
+          {
+            "name": "Balanced"
+          },
+          {
+            "name": "Aggressive"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Seam",
+      "docs": [
+        "A registered yield source and its allocation within one stope."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "seam_id",
+            "type": "u16"
+          },
+          {
+            "name": "allocation_bps",
+            "docs": [
+              "Share of the owning stope's capital routed here, in basis points."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "stope_id",
+            "docs": [
+              "Stope this seam belongs to. A seam serves exactly one stope, so a",
+              "stope's emissions exposure is the sum over its own seams and nothing",
+              "else."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "yield_kind",
+            "docs": [
+              "Sustainable or emissions. Immutable after registration: changing it",
+              "would silently rewrite the meaning of `realized_yield` already booked",
+              "under the old kind."
+            ],
+            "type": {
+              "defined": {
+                "name": "YieldKind"
+              }
+            }
+          },
+          {
+            "name": "risk_tier",
+            "docs": [
+              "Headlamp tier, 1 (lowest) to 5 (highest). Bounded by the owning",
+              "stope's `RiskProfile::max_risk_tier`."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "active",
+            "docs": [
+              "Inactive seams cannot accrue and cannot hold an allocation."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "venue",
+            "docs": [
+              "NUL-padded ASCII venue name, e.g. `kyros-lend`."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "venue_program",
+            "docs": [
+              "On-chain program of the venue, when it has one. `Pubkey::default()`",
+              "for a venue that is not a Solana program."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "asset_mint",
+            "docs": [
+              "Mint of the asset deployed into this seam."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "emission_mint",
+            "docs": [
+              "For an emissions seam, the mint the emission is paid in. Required to be",
+              "set for `YieldKind::Emissions` and required to be",
+              "`Pubkey::default()` for `YieldKind::Sustainable`."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "realized_yield",
+            "docs": [
+              "Lifetime realized yield from this seam, in internal accounting units.",
+              "One kind only, because the seam is one kind only."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "accrual_count",
+            "type": "u64"
+          },
+          {
+            "name": "emission_ends_at",
+            "docs": [
+              "Unix timestamp at which this seam's emission schedule ends.",
+              "",
+              "Required to be non-zero and in the future for an emissions seam, and",
+              "required to be zero for a sustainable one. `accrue_yield` refuses an",
+              "emissions accrual once the chain clock has passed it, so a seam cannot",
+              "keep reporting yield from a schedule that has run out."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "registered_at",
+            "type": "i64"
+          },
+          {
+            "name": "last_accrual_at",
+            "type": "i64"
+          },
+          {
+            "name": "last_rebalance_at",
+            "type": "i64"
+          },
+          {
+            "name": "_padding",
+            "type": {
+              "array": [
+                "u8",
+                7
+              ]
+            }
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "SeamRebalanced",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "seam",
+            "type": "pubkey"
+          },
+          {
+            "name": "seam_id",
+            "type": "u16"
+          },
+          {
+            "name": "stope_id",
+            "type": "u8"
+          },
+          {
+            "name": "keeper",
+            "type": "pubkey"
+          },
+          {
+            "name": "yield_kind",
+            "type": {
+              "defined": {
+                "name": "YieldKind"
+              }
+            }
+          },
+          {
+            "name": "previous_allocation_bps",
+            "type": "u16"
+          },
+          {
+            "name": "new_allocation_bps",
+            "type": "u16"
+          },
+          {
+            "name": "stope_allocated_bps",
+            "docs": [
+              "Stope totals after the change, so a reader never has to re-sum the",
+              "seam accounts to see the resulting exposure."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "stope_emissions_bps",
+            "type": "u16"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SeamRegistered",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "seam",
+            "type": "pubkey"
+          },
+          {
+            "name": "seam_id",
+            "type": "u16"
+          },
+          {
+            "name": "stope_id",
+            "type": "u8"
+          },
+          {
+            "name": "venue",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "venue_program",
+            "type": "pubkey"
+          },
+          {
+            "name": "asset_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "yield_kind",
+            "type": {
+              "defined": {
+                "name": "YieldKind"
+              }
+            }
+          },
+          {
+            "name": "allocation_bps",
+            "type": "u16"
+          },
+          {
+            "name": "risk_tier",
+            "type": "u8"
+          },
+          {
+            "name": "emission_ends_at",
+            "docs": [
+              "Zero for a sustainable seam; the end of the schedule for an emissions",
+              "seam, which the program required to be in the future at registration."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "emission_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "stope_emissions_bps",
+            "docs": [
+              "Stope-wide emissions share after this seam was added."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Stope",
+      "docs": [
+        "One risk-profiled vault: its shares, its principal, and two separate yield",
+        "accumulators.",
+        "",
+        "There is no combined `total_yield` field anywhere in this struct, and that",
+        "is deliberate. Sustainable and emissions yield are accumulated, indexed and",
+        "reported apart from each other all the way down to the individual miner,",
+        "because a single blended number cannot answer the only question that",
+        "matters about a BTC yield product: how much of this survives when the",
+        "emission schedule ends."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "stope_id",
+            "type": "u8"
+          },
+          {
+            "name": "risk_profile",
+            "docs": [
+              "Fixed to `stope_id` by `RiskProfile::from_id`."
+            ],
+            "type": {
+              "defined": {
+                "name": "RiskProfile"
+              }
+            }
+          },
+          {
+            "name": "paused",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "allocated_bps",
+            "docs": [
+              "Sum of `allocation_bps` over this stope's active seams. Never above",
+              "10_000."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "emissions_bps",
+            "docs": [
+              "The part of `allocated_bps` that sits on seams whose yield kind is",
+              "[`YieldKind::Emissions`]. Capped by",
+              "`RiskProfile::max_emissions_bps`.",
+              "",
+              "This is the headline honesty number for the stope, maintained",
+              "incrementally on every allocation change so a reader never has to sum",
+              "the seam accounts to learn it."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "seam_count",
+            "type": "u16"
+          },
+          {
+            "name": "miner_count",
+            "type": "u32"
+          },
+          {
+            "name": "yield_index_sustainable",
+            "docs": [
+              "Per-share accumulator for sustainable yield, scaled by",
+              "`YIELD_INDEX_SCALE`."
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "yield_index_emissions",
+            "docs": [
+              "Per-share accumulator for emissions yield, scaled by",
+              "`YIELD_INDEX_SCALE`."
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "total_shares",
+            "docs": [
+              "Outstanding principal claims. A share is one internal accounting unit",
+              "of principal."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "total_deposits",
+            "docs": [
+              "Principal actually held against those claims. Equal to `total_shares`",
+              "while no loss has been recorded; the redemption path divides by",
+              "`total_shares` rather than assuming parity, so a future loss-recording",
+              "instruction does not require re-deriving every payout formula."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "pending_redemption",
+            "docs": [
+              "Internal units reserved by queued Orecart tickets and not yet paid out."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "total_redeemed",
+            "docs": [
+              "Internal units paid out over this stope's lifetime."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "realized_sustainable",
+            "docs": [
+              "Lifetime realized sustainable yield, in internal accounting units."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "realized_emissions",
+            "docs": [
+              "Lifetime realized emissions yield, in internal accounting units."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "last_rebalance_at",
+            "type": "i64"
+          },
+          {
+            "name": "last_accrual_at",
+            "type": "i64"
+          },
+          {
+            "name": "_padding",
+            "type": {
+              "array": [
+                "u8",
+                2
+              ]
+            }
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "StopeOpened",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "stope",
+            "type": "pubkey"
+          },
+          {
+            "name": "stope_id",
+            "type": "u8"
+          },
+          {
+            "name": "risk_profile",
+            "type": {
+              "defined": {
+                "name": "RiskProfile"
+              }
+            }
+          },
+          {
+            "name": "max_emissions_bps",
+            "type": "u16"
+          },
+          {
+            "name": "max_risk_tier",
+            "type": "u8"
+          },
+          {
+            "name": "orecart_queue",
+            "type": "pubkey"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TicketStatus",
+      "docs": [
+        "Lifecycle of an Orecart redemption ticket."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Queued"
+          },
+          {
+            "name": "Claimed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VaultConfig",
+      "docs": [
+        "Global protocol configuration and the signing authority for every",
+        "program-owned token account.",
+        "",
+        "This PDA is also the token authority of `[\"bond_vault\"]` and of every",
+        "`[\"adit_vault\", asset_mint]`, so its bump is read on the payout path and is",
+        "stored rather than recomputed."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "docs": [
+              "Admin key. Checked with `has_one = authority` on every admin-only",
+              "instruction."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "pending_authority",
+            "docs": [
+              "Proposed next authority. `Pubkey::default()` when no handover is",
+              "pending. Two-step handover exists so a typo in an authority transfer",
+              "cannot brick the protocol."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "lodz_mint",
+            "docs": [
+              "$LODZ mint. Keeper bonds are denominated in it."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "lodz_token_program",
+            "docs": [
+              "Token program that owns `lodz_mint`, pinned at initialization. Deposits",
+              "pin their own token program per Adit; this one covers bond and slash."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury",
+            "docs": [
+              "$LODZ token account that receives slashed keeper bonds."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_bps",
+            "docs": [
+              "Redemption fee, in basis points, charged on the gross payout of an",
+              "Orecart ticket. Capped by `MAX_FEE_BPS`."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "redemption_delay_sec",
+            "docs": [
+              "Base wait stamped on every ticket, before queue congestion."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "max_redemption_delay_sec",
+            "docs": [
+              "Ceiling applied to `base + congestion`. A ticket is never stamped with",
+              "a `claimable_at` further out than this."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "queue_drain_per_day",
+            "docs": [
+              "Internal accounting units the protocol commits to being able to settle",
+              "per day. Drives the congestion term in `math::queue_delay_sec`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "min_keeper_bond",
+            "docs": [
+              "Minimum bond for a keeper to count as active."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "keeper_unbond_cooldown_sec",
+            "docs": [
+              "A keeper may not withdraw bond until this many seconds have passed",
+              "since its last rebalance. Evidence that a rebalance was bad surfaces",
+              "after the fact, so the cooldown is anchored to the last action rather",
+              "than to the unbond request."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "total_normalized_deposits",
+            "docs": [
+              "Sum of live deposits across every stope, in internal accounting units."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "adit_count",
+            "type": "u16"
+          },
+          {
+            "name": "seam_count",
+            "type": "u16"
+          },
+          {
+            "name": "keeper_count",
+            "type": "u16"
+          },
+          {
+            "name": "stope_count",
+            "type": "u8"
+          },
+          {
+            "name": "paused",
+            "docs": [
+              "Global circuit breaker. Blocks deposits, accrual, redemption requests",
+              "and rebalances. It deliberately does **not** block `claim_redemption`:",
+              "a ticket whose delay has already elapsed is a settled debt, and a pause",
+              "switch that can strand it is a rug with extra steps."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "_padding",
+            "type": {
+              "array": [
+                "u8",
+                5
+              ]
+            }
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "VaultInitialized",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault_config",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "lodz_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury",
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_bps",
+            "type": "u16"
+          },
+          {
+            "name": "redemption_delay_sec",
+            "type": "i64"
+          },
+          {
+            "name": "max_redemption_delay_sec",
+            "type": "i64"
+          },
+          {
+            "name": "queue_drain_per_day",
+            "type": "u64"
+          },
+          {
+            "name": "min_keeper_bond",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "VaultPauseChanged",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "vault_config",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "paused",
+            "type": "bool"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "YieldAccrued",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "seam",
+            "type": "pubkey"
+          },
+          {
+            "name": "seam_id",
+            "type": "u16"
+          },
+          {
+            "name": "stope_id",
+            "type": "u8"
+          },
+          {
+            "name": "reporter",
+            "type": "pubkey"
+          },
+          {
+            "name": "yield_kind",
+            "docs": [
+              "The whole point of this event. Never summed with the other kind."
+            ],
+            "type": {
+              "defined": {
+                "name": "YieldKind"
+              }
+            }
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "seam_realized_yield",
+            "type": "u64"
+          },
+          {
+            "name": "stope_realized_sustainable",
+            "docs": [
+              "Stope lifetime totals after this accrual, kept apart."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "stope_realized_emissions",
+            "type": "u64"
+          },
+          {
+            "name": "stope_total_shares",
+            "type": "u64"
+          },
+          {
+            "name": "emission_ends_at",
+            "docs": [
+              "Zero for a sustainable seam. For an emissions seam this is when the",
+              "number above stops arriving."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "YieldKind",
+      "docs": [
+        "How a seam produces its yield.",
+        "",
+        "This split is the product. A protocol that reports one blended APY cannot",
+        "tell a depositor whether the number survives next quarter, so the two are",
+        "never summed into a single field anywhere in this program: separate",
+        "accumulators on the [`Stope`], separate accumulators on the [`Miner`], and",
+        "a `yield_kind` on every `YieldAccrued` event."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Sustainable"
+          },
+          {
+            "name": "Emissions"
+          }
+        ]
+      }
+    }
+  ]
+}
