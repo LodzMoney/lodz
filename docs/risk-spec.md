@@ -381,3 +381,150 @@ Two entries carry qualifications that are part of the record:
 - FTX is on this list although nothing was exploited on chain. The issuer stopped existing.
   Issuer survival is therefore its own risk factor under `custody` rather than a footnote
   to exploits.
+
+---
+
+## 7. On-chain enforcement
+
+The following are rejected by the program, not discouraged by policy.
+
+### 7.1 An unregistered mint cannot be deposited
+
+There is one `Adit` per mint, and a mint without an adit cannot be deposited
+(`state/adit.rs:7-9`). Registration requires `custody_kind` and `risk_tier` to be written
+on chain first. The gate is therefore: no token enters without its custody model and risk
+tier recorded.
+
+`Adit` also pins `token_program` at registration (`state/adit.rs:20-28`) and re-checks it
+on every deposit and payout transfer, which is what makes routing a Token-2022 mint
+through the classic token program impossible.
+
+### 7.2 Non-1:1 representations are expressed, not assumed
+
+`conversion_num` and `conversion_den` (`state/adit.rs:33-43`) fold together the decimal
+difference against the internal 8-decimal unit and the asset's declared ratio to one
+bitcoin. A representation that is not 1:1 is expressed here rather than quietly counted as
+if it were. `INTERNAL_DECIMALS = 8` carries an explicit comment (`state/mod.rs:90-95`)
+stating that nothing about the unit makes a deposit bitcoin.
+
+### 7.3 Authority ceilings a compromised key cannot raise
+
+Declared at `state/mod.rs:64-85` under a comment stating these are the parameters where
+the difference between bad and unrecoverable is decided:
+
+| Constant | Value | Effect |
+|---|---|---|
+| `MAX_FEE_BPS` | 500 | Redemption fee cannot exceed 5 percent |
+| `MAX_BASE_REDEMPTION_DELAY_SEC` | 30 days | Above this it is a lockup, which this product does not sell |
+| `MAX_TOTAL_REDEMPTION_DELAY_SEC` | 180 days | Ceiling including the queue congestion term |
+| `MAX_KEEPER_UNBOND_COOLDOWN_SEC` | 30 days | Keeper unbond cooldown ceiling |
+
+The authority sets live values below these. It cannot raise the ceilings by sending a
+transaction. The stated threat model is explicit: a compromised authority key is a
+realistic failure mode for a young protocol.
+
+### 7.4 Emissions disclosure is a validity condition
+
+`Seam::validate_emission_fields` (`state/seam.rs:85-108`) rejects an emissions seam that
+does not declare when its emission ends, or declares an end already in the past, or fails
+to name the mint the emission is paid in. It also rejects a sustainable seam carrying
+emission fields, so the two kinds cannot be blurred by stale values.
+
+`Seam::accrual_window_open` (`state/seam.rs:111-116`) closes the window once the chain
+clock passes `emission_ends_at`, so a seam cannot keep booking yield from a schedule that
+has run out. The corresponding error is `EmissionEnded` (`errors.rs:81-82`).
+
+`yield_kind` is immutable after registration. The source states the reason
+(`state/seam.rs:26-28`): changing it would silently rewrite the meaning of
+`realized_yield` already booked under the old kind.
+
+### 7.5 The two-kind on-chain enum against the three-kind catalogue
+
+The on-chain `YieldKind` has two variants, `Sustainable` and `Emissions`
+(`state/mod.rs:117-130`). The service-side `YieldKind` has three, adding `counterparty`
+(`common.py:25`).
+
+This divergence is intentional and is recorded here so it is not read as a defect. The
+third kind exists because the highest advertised BTC yield on Solana is a perpetuals vault
+paying out of trader losses. Such a venue is classified and displayed by the catalogue but
+is not routable by the deployed program, which can only register a seam of one of its two
+variants. Any future support for counterparty seams on chain requires an enum change and
+therefore a program upgrade, which is the correct level of friction for adding a yield
+source whose payer is another trader.
+
+---
+
+## 8. Exposure metrics
+
+`RiskSummary` (`models/headlamp.py:86-103`) is embedded in every assay response so a rate
+cannot be rendered without its risk context. Fields:
+
+| Field | Meaning |
+|---|---|
+| `overall_tier` | Tier of the allocation asked about |
+| `exposure_by_tier_bps` | Share of routed capital per risk tier, in basis points |
+| `exposure_by_trust_model_bps` | Share behind each custody arrangement |
+| `max_wrap_hops` | Deepest custody chain any routed capital sits behind |
+| `freezable_exposure_bps` | Share in assets whose issuer can freeze accounts |
+| `layers` | Layer headlines, factors stripped |
+| `disclosures` | The standing disclosure list |
+
+`overall_tier` in the summary describes the allocation, not the maximum across layers. The
+source comment (`headlamp_risk.summary_for`) gives the reason: folding in risks that exist
+at any size would pin every answer to high and make the field say nothing. The full
+breakdown with factors is served at `GET /headlamp/risk`.
+
+`freezable_exposure_bps` deserves emphasis. It answers a question a depositor cannot
+otherwise ask: what share of my capital sits in tokens whose issuer can immobilise the
+vault's account without any technical failure occurring. For a catalogue containing cbBTC
+and xBTC this is a non-zero number by construction.
+
+---
+
+## 9. Standing disclosures
+
+Returned by `headlamp_risk.disclosures()` with every risk and assay response:
+
+1. Every asset routed is a wrapped or bridged claim on bitcoin held by a third party. It is
+   not a coin on the Bitcoin base chain, and its value depends on that third party
+   honouring redemption.
+2. Yield is reported in three kinds and they are never added into one another.
+3. Emissions exposure across this catalogue is zero, measured rather than assumed.
+4. Liquidity provision fee rates are quoted gross of divergence loss by every upstream
+   source. Where LODZ can estimate that loss it subtracts it; where it cannot, the seam is
+   marked and no net figure is given.
+5. BTC lending on Solana pays close to nothing. The largest reserve, $44.0M of cbBTC on
+   Kamino, pays 0.00459 percent. Any product advertising a meaningful BTC lending rate on
+   this chain is describing something else.
+6. Principal is at risk. Deposits are not bank deposits, carry no insurance, and can be
+   impaired by a venue exploit, an issuer failure or a custody failure.
+7. Redemption is a claim on the vault's open positions. Its speed depends on venue depth at
+   the time of exit, and the queue lengthens under stress.
+
+While `vault_is_live` is false, an eighth is appended stating that the vault program is not
+deployed and every projection models what the current catalogue would pay rather than
+reporting realised performance.
+
+---
+
+## 10. Unverified
+
+Recorded as unverified rather than filled in. Each entry names what would settle it.
+
+| Item | Status | What would settle it |
+|---|---|---|
+| zBTC guardian m-of-n threshold | Unverified | Not published. Requires Zeus disclosure or program account decoding |
+| zBTC supply summed across all chains | Unverified | Token also exists on other chains through CCIP; a 1:1 comparison needs the total |
+| Drift `Custom: 101` error meaning | Unverified | Drift error code table. Determines whether the market is halted or the oracle is stale |
+| Zeta, Adrena, Flash Trade BTC perp liveness | Unverified | Apply the same on-chain check used on Drift |
+| Points programme sizes | Unverified | No unauthenticated public API found. Until then, "zero emissions" carries the qualifier "token emissions" |
+| xBTC designated locked BTC address | Unverified | OKX disclosure |
+| cbBTC audit cadence and format | Unverified | Coinbase documentation |
+| 21BTC custodian identity | Unverified | 21.co states "institutional-grade third-party" only |
+
+The upgrade authority survey in `docs/research/btc-on-solana.md` section 1-4 produced one
+finding worth restating: every relevant bridge and issuer program examined is upgradeable,
+and every upgrade authority is an off-curve PDA. No program in the set has burned its
+authority. A PDA mint authority is therefore a conditional guarantee, conditional on
+whoever controls the program that drives it, and the risk display states the upgrade
+surface alongside the mint authority for that reason.
