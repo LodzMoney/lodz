@@ -198,3 +198,269 @@ This design has a specific origin, recorded in `security.md` section 4: an early
 served a catalogue of plausible figures that were not measurements. The rule that came out
 of it is that a fallback must announce itself, must expire, and must never be quieter than
 the failure it is covering.
+
+---
+
+## 4. On-chain versus off-chain
+
+The clearest way to read this system is to ask which claims survive without trusting LODZ.
+
+### 4.1 Enforced by the program -- verifiable without trusting the operator
+
+These are properties of deployed bytecode. Anyone can read the account state and confirm
+them.
+
+| Property | Mechanism |
+|---|---|
+| A redemption cannot be paid early | `require!(now >= orecart.claimable_at)`, `instructions/redemption.rs:365-368` |
+| The delay is fixed at request time | `claimable_at` stamped once and stored, `redemption.rs:162, 241` |
+| A ticket cannot be claimed twice | Status check against `TicketAlreadyClaimed`, `redemption.rs:360` |
+| Only the owner can move a position | `has_one = owner`, `redemption.rs:64, 292, 300` |
+| Only the authority can change parameters | `has_one = authority`, `admin.rs:161, 224, 328, 428, 562, 612` |
+| Parameters have ceilings a key cannot raise | `MAX_FEE_BPS = 500` and three delay ceilings, `state/mod.rs:74-85` |
+| A keeper has capital at risk | Bond and slash paths, `instructions/keeper.rs`, `admin.rs:655` |
+| Arithmetic cannot wrap silently | `overflow-checks = true` plus checked forms |
+| An unregistered mint cannot be deposited | Adit PDA derived from the mint itself |
+
+### 4.2 Reported off-chain -- true only if the indexer is honest
+
+These are measurements and estimates. The program does not and cannot verify them.
+
+| Quantity | Why it cannot be on-chain |
+|---|---|
+| Venue APY | Lives in third-party APIs. No oracle publishes it. |
+| Ninety day median, seven day window | Computed from off-chain history series |
+| Divergence loss estimate | Derived from pool price history, and it is a model |
+| Yield kind classification | A judgement about where money comes from |
+| TVL and liquidity floors | Third-party aggregation |
+| Cross-source agreement | Compares two off-chain sources |
+
+The honest framing: **the queue is trustless, the yield figures are not.** A depositor does
+not have to believe LODZ about when their principal becomes claimable -- that is in the
+account. They do have to believe LODZ about what a venue is paying, which is why every
+rate ships with its source URL, its window basis, its cross-check result and its
+provenance mode. Auditability is the substitute for enforcement where enforcement is
+impossible.
+
+---
+
+## 5. The Anchor program
+
+Source: `packages/anchor-program/programs/lodz-vault/src/`. Interface:
+`packages/anchor-program/target/idl/lodz_vault.json`.
+
+Declared program id, from `lib.rs:70`:
+
+```
+F9XmBYVEyEwFyHAdMJs6uBvyRag3AFhQ6YMZvqm13SLW
+```
+
+This is a build-time identity, not a deployment. See section 6.
+
+IDL totals, read from the file: **17 instructions, 8 accounts, 16 events, 53 errors, 31
+types.**
+
+### 5.1 Accounts and their PDA seeds
+
+Seed constants are declared once in `state/mod.rs:44-62` and referenced everywhere; no
+call site builds a seed from a literal.
+
+| Account | Seeds | Cardinality |
+|---|---|---|
+| `VaultConfig` | `["vault_config"]` | One per program |
+| `Adit` | `["adit", asset_mint]` | One per accepted asset |
+| `Stope` | `["stope", stope_id_le]` | One per risk profile |
+| `Seam` | `["seam", seam_id_le]` | One per venue position |
+| `Miner` | `["miner", owner, stope_id_le]` | One per depositor per profile |
+| `Orecart` | `["orecart", owner, ticket_index_le]` | One per redemption ticket |
+| `OrecartQueue` | `["orecart_queue", stope_id_le]` | One per profile |
+| `Keeper` | `["keeper", keeper_authority]` | One per keeper |
+
+Two further PDAs hold tokens rather than state: `["adit_vault", asset_mint]` for deposited
+collateral and `["bond_vault"]` for keeper bonds. Both have `VaultConfig` as their token
+authority.
+
+Every derivation is a constant plus a discriminating key or a little-endian id. Verified
+against the call sites: `MINER_SEED` at `redemption.rs:62, 290`, `ORECART_QUEUE_SEED` at
+`redemption.rs:70, 308`, `ORECART_SEED` at `redemption.rs:80, 298`, and the full
+cross-instruction table in `security.md` section 5.3.
+
+### 5.2 Instructions
+
+All 17, grouped by who may call them. Names and arguments taken from the IDL.
+
+**Administrative** -- authority only:
+
+| Instruction | Arguments |
+|---|---|
+| `initialize_vault` | `params` |
+| `initialize_bond_vault` | -- |
+| `register_adit` | `params` |
+| `open_stope` | `stope_id`, `risk_profile` |
+| `register_seam` | `seam_id`, `stope_id`, `params` |
+| `update_seam_allocation` | `seam_id`, `stope_id`, `new_allocation_bps` |
+| `pause_vault` | -- |
+| `unpause_vault` | -- |
+| `slash_keeper` | `amount`, `reason_code` |
+| `propose_authority` | -- |
+| `accept_authority` | -- |
+
+**Depositor** -- signed by the position owner:
+
+| Instruction | Arguments |
+|---|---|
+| `deposit` | `stope_id`, `amount` |
+| `request_redemption` | `stope_id`, `ticket_index`, `shares` |
+| `claim_redemption` | `stope_id`, `ticket_index` |
+
+**Keeper** -- bonded operators:
+
+| Instruction | Arguments |
+|---|---|
+| `bond_keeper` | `amount` |
+| `unbond_keeper` | `amount` |
+| `accrue_yield` | `seam_id`, `stope_id`, `amount` |
+
+Authority handover is two-step -- `propose_authority` then `accept_authority` -- so a typo
+in a transfer cannot orphan the protocol. The vault initialises paused (`lib.rs:78`), so a
+deployed-but-unreviewed program cannot take deposits. Pausing does not block claiming a
+ticket whose delay has already elapsed: that is a settled debt, and an admin able to
+withhold it would be an admin able to freeze user funds.
+
+### 5.3 Events
+
+Sixteen events, one per state transition that an indexer needs to follow:
+`VaultInitialized`, `BondVaultInitialized`, `AditRegistered`, `StopeOpened`,
+`SeamRegistered`, `SeamRebalanced`, `Deposit`, `YieldAccrued`, `RedemptionRequested`,
+`RedemptionClaimed`, `KeeperBonded`, `KeeperUnbonded`, `KeeperSlashed`,
+`VaultPauseChanged`, `AuthorityTransferProposed`, `AuthorityTransferAccepted`.
+
+Every instruction that changes state emits one. This is what lets the indexer reconstruct
+protocol state from logs rather than by polling every account.
+
+---
+
+## 6. Deployment topology
+
+| Component | Platform | State |
+|---|---|---|
+| `apps/web` | Vercel, project `lodz-web` | Deployed |
+| `apps/service` | Railway, project `lodz-api` | Deployed |
+| Anchor program | Solana mainnet | **Not deployed** |
+| `lodz-cli`, `lodz-sdk` | npm | Packaged |
+| Docs | `LodzMoney/lodz`, rendered at `/shaft` | Mirrored |
+
+### 6.1 The program is built, not deployed
+
+`packages/anchor-program/target/deploy/lodz_vault.so` exists and a program keypair has been
+generated. Neither has been sent to any cluster -- not mainnet, not devnet, not testnet.
+The id in `lib.rs:70` is what the program will claim when deployed; it is currently a local
+declaration and nothing more.
+
+This is deliberate and is described in `security.md` section 6: no transaction is submitted
+to any cluster until the operator supplies a keypair path, the resolved public key, the
+named cluster and a balance confirmation. `anchor build` and localnet tests are the
+permitted operations.
+
+The consequence flows through the whole system. The API reports `vault_status:
+pre_deployment`, `btc_in_seams: 0.0` and `basis: target_allocation`, because zero BTC is
+the true amount currently routed. Every projection is a model of what the current
+catalogue would pay, not a report of realised performance, and the API says so in each
+response rather than in a footnote.
+
+### 6.2 Deployment mechanism
+
+Both deployed components ship by `git push` to their connected repository. The platform
+CLIs are used for environment variables and inspection only. `railway up` hangs
+indefinitely in `INITIALIZING`; `vercel deploy` and `vercel --prod` upload stale prebuilt
+output. Both are prohibited, from measurement rather than preference.
+
+The service declares its start command in one file, `railway.json`, and there is
+deliberately no `Procfile` beside it. `railway.json` takes precedence over one, so a
+second file can only ever drift out of sync silently -- which is exactly how a start
+command passing a literal, unexpanded `$PORT` survived unnoticed. The command is wrapped in
+`sh -c` so the shell expands the variable that the platform's direct exec would not.
+
+---
+
+## 7. Environment variable boundary
+
+Any variable prefixed `NEXT_PUBLIC_` is inlined into the browser bundle as plain text at
+build time. The prefix is therefore a publication decision, not a naming convention.
+
+### 7.1 Decision matrix
+
+| Question | Answer | Where it goes |
+|---|---|---|
+| Does exposure cost anything? | No | `NEXT_PUBLIC_*` |
+| Does it authenticate, meter or bill? | Yes | Server only |
+| Does the browser need it before JavaScript can run? | Yes, and it is not a credential | `NEXT_PUBLIC_*` |
+| Is it needed in the browser but *is* a credential? | -- | Neither. Proxy it. |
+
+The last row is the one that matters. A credential the browser appears to need is a
+routing problem, not a labelling problem. LODZ resolves it with server-side route handlers
+(`/api/rpc`, `/api/catalog`, `/api/metrics`) that hold the credential and return only
+results.
+
+### 7.2 Applied
+
+Browser-visible, all non-secret by construction: a project address, four feature flags, a
+program id, the public API base URL, a public Solana RPC endpoint, the site URL, a social
+handle and a public repository path.
+
+Server-only: the keyed Solana provider URLs, the database URL, the Redis URL, the CORS
+origin list, the display-rule thresholds and the seam source configuration.
+
+The wallet adapter is the usual place this rule breaks, because a wallet connection
+genuinely needs an RPC endpoint in the browser. It is given the public mainnet endpoint,
+which carries no credential and costs nothing to expose. Calls that need the keyed provider
+go through the proxy.
+
+Verified against the build output: zero credential matches across 1,302 files in `.next`,
+with a control query returning 172 files to prove the scan reads bundle contents. Method
+and full commands in `security.md` sections 1.3 and 10.
+
+---
+
+## 8. Package layout
+
+`packages/` is one repository, `Cryptottat/lodz-core`, holding seven workspaces:
+
+| Directory | npm name | Role |
+|---|---|---|
+| `anchor-program/` | `lodz-anchor-program` | Rust program, IDL, localnet tests |
+| `assay-engine/` | `lodz-assay-engine` | Three-way yield decomposition |
+| `seam-router/` | `lodz-seam-router` | Allocation policy across seams |
+| `orecart-queue/` | `lodz-orecart-queue` | Redemption wait computation |
+| `headlamp-risk/` | `lodz-headlamp-risk` | Risk layering and exposure |
+| `sdk-ts/` | `lodz-sdk` | Client library |
+| `cli/` | `lodz-cli` | Command line interface |
+
+The four domain packages mirror rules the service also implements. That duplication is
+intentional and bounded: the service is the runtime source of truth for anything served
+over HTTP, while the packages let an integrator compute the same decomposition locally
+without depending on a running API. Where they disagree, the service is correct and the
+package is a defect.
+
+---
+
+## 9. Known structural limitations
+
+**The indexer is single-instance.** The cache and the rate limiter are both in-process.
+Neither survives a restart, and neither coordinates across replicas. Horizontal scaling
+requires moving both to shared storage first.
+
+**No database is attached.** `DATABASE_URL` and `REDIS_URL` are unset and the service runs
+without them. There is therefore no rate history of our own -- every historical figure
+comes from a third-party series at request time, and an upstream that loses history loses
+it for us too.
+
+**The public mirror is a staged copy, not a live one.** Documents and selected sources are
+pushed to `LodzMoney/lodz` by an explicit script. A change landing in a private repository
+is not visible publicly until that script runs.
+
+**The program is unaudited and undeployed.** No third-party review has been performed, and
+nothing in section 5 has been exercised on a live cluster.
+
+**Cross-source verification detects disagreement, not error.** If two sources are wrong in
+the same direction, the check passes. It establishes freshness, not truth.
