@@ -292,3 +292,285 @@ Three rules exist to stop a technically accurate number from being a misleading 
 - Points programmes are not converted to a rate. Assigning a price to unissued points
   smuggles an emissions expectation into a figure labelled as organic yield. There is no
   conversion path in the codebase to misuse.
+
+---
+
+## 5. Anchor program security
+
+Source: `packages/anchor-program/programs/lodz-vault/src/`. The program defines 53 distinct
+error variants (`errors.rs`), which is the shape of a program that rejects specifically
+rather than generically.
+
+### 5.1 Ownership is checked by constraint, not by hand
+
+Account ownership is asserted with Anchor's `has_one`, so the check is part of account
+resolution and cannot be forgotten inside a handler:
+
+```rust
+has_one = owner @ LodzError::Unauthorized,        // redemption.rs:64, 292, 300
+has_one = authority @ LodzError::Unauthorized,    // admin.rs:161, 224, 328, 428, 562, 612
+has_one = asset_mint @ LodzError::AditMintMismatch, // deposit.rs:38, redemption.rs:92, 301, 318
+```
+
+Every admin-only instruction carries `has_one = authority`. Every redemption path carries
+`has_one = owner`. Mint identity is bound the same way, so a caller cannot substitute a
+different asset's accounts into a matched instruction.
+
+### 5.2 Arithmetic cannot silently wrap
+
+`overflow-checks = true` is set in the workspace profile
+(`packages/anchor-program/Cargo.toml:10`), and value-carrying arithmetic uses checked forms
+that surface as errors:
+
+```rust
+// deposit.rs:103-108 -- deposit cap
+let after = ctx.accounts.adit.total_deposited
+    .checked_add(amount)
+    .ok_or(LodzError::MathOverflow)?;
+```
+
+`checked_add` appears throughout the deposit, keeper and redemption paths;
+`checked_mul` guards the fixed-point math in `math.rs:49, 90, 107, 128`.
+
+`saturating_sub` is used deliberately and only where clamping at zero is the correct
+outcome rather than a way to avoid thinking about the error case. `keeper.rs:231` reduces a
+keeper's bond, and `math.rs:101` computes a yield index delta where an index that has not
+advanced must produce zero rather than a negative.
+
+### 5.3 PDA seeds are consistent across every call site
+
+An account derived with different seeds in different instructions is not the same account,
+and the resulting bug presents as missing state rather than as an error. The seed constants
+are declared once and referenced everywhere:
+
+| Seed | Call sites |
+|---|---|
+| `VAULT_CONFIG_SEED` | `deposit.rs:29`, `accrual.rs:47`, `keeper.rs:34`, `keeper.rs:151`, `keeper.rs:263`, `admin.rs:75`, `admin.rs:159` |
+| `ADIT_SEED` + mint | `deposit.rs:36`, `accrual.rs:80` |
+| `STOPE_SEED` + id | `deposit.rs:46`, `accrual.rs:73`, `keeper.rs:287` |
+| `KEEPER_SEED` + authority | `accrual.rs:56`, `keeper.rs:50`, `keeper.rs:161`, `keeper.rs:270` |
+| `SEAM_SEED` + id | `accrual.rs:64`, `keeper.rs:279` |
+| `ADIT_VAULT_SEED` + mint | `deposit.rs:74`, `accrual.rs:100` |
+
+Each is composed from a constant plus a discriminating key or little-endian id. No call
+site builds a seed from a literal.
+
+### 5.4 Stack frame pressure
+
+Solana BPF programs have a 4,096-byte stack frame limit, and an instruction with many
+deserialized accounts exceeds it before the logic is written. Every large account in the
+deposit and redemption contexts is heap-allocated with `Box`:
+
+```rust
+pub vault_config: Box<Account<'info, VaultConfig>>,   // deposit.rs:32
+pub adit:         Box<Account<'info, Adit>>,          // deposit.rs:42
+pub stope:        Box<Account<'info, Stope>>,         // deposit.rs:49
+pub miner:        Box<Account<'info, Miner>>,         // deposit.rs:60
+pub orecart_queue: Box<Account<'info, OrecartQueue>>, // redemption.rs:74
+pub orecart:      Box<Account<'info, Orecart>>,       // redemption.rs:83
+```
+
+This is a correctness control, not a style choice. Frame exhaustion appears at runtime on
+the instructions with the most accounts, which are the ones that move the most value.
+
+### 5.5 Time validation on redemption
+
+A queued ticket cannot be claimed before its delay elapses (`redemption.rs:365-368`):
+
+```rust
+require!(
+    now >= ctx.accounts.orecart.claimable_at,
+    LodzError::RedemptionNotClaimable
+);
+```
+
+`claimable_at` is stamped once at request time from the base delay plus a congestion term
+and is stored on the ticket (`redemption.rs:162, 241`), so it cannot be recomputed
+favourably later. The predicate is duplicated as `Orecart::is_claimable_at`
+(`state/orecart.rs:73-74`), which additionally requires the ticket still be in `Queued`
+status, and claim ordering is guarded separately by a `TicketAlreadyClaimed` check
+(`redemption.rs:360`).
+
+### 5.6 Authority scope
+
+The authority is a single key checked by constraint, and what it can do is bounded by
+compile-time ceilings rather than by trust (`state/mod.rs:74-85`):
+
+```rust
+pub const MAX_FEE_BPS: u16 = 500;                          // 5 percent
+pub const MAX_BASE_REDEMPTION_DELAY_SEC: i64 = 30 * 86_400;
+pub const MAX_TOTAL_REDEMPTION_DELAY_SEC: i64 = 180 * 86_400;
+pub const MAX_KEEPER_UNBOND_COOLDOWN_SEC: i64 = 30 * 86_400;
+```
+
+A compromised authority key therefore cannot set a 100 percent redemption fee or convert
+the queue into an indefinite lockup. The ceilings bound the damage; they do not prevent it.
+
+Authority handover is two-step: `propose_authority` (`admin.rs:750`) followed by
+`accept_authority` (`admin.rs:776`), with the proposal held in `pending_authority`
+(`state/config.rs:17-19`). A single-step transfer turns one typo into a permanently lost
+protocol.
+
+The vault starts paused (`lib.rs:78`), so an initialized-but-unreviewed deployment cannot
+take deposits. `pause_vault` and `unpause_vault` (`admin.rs:572, 586`) are authority-gated.
+Pausing does not block claiming a ticket whose delay has already elapsed
+(`state/config.rs:57-59`): that is a settled debt, and a pause that could withhold it would
+be an admin key able to freeze user funds already promised.
+
+### 5.7 Unverified
+
+The program has not been audited by a third party. The controls above are what the source
+implements, verified by reading it; they are not an assurance that the program is free of
+defects. Localnet unit tests exist; there has been no mainnet or devnet deployment.
+
+---
+
+## 6. On-chain deployment gate
+
+No agent or automation submits a Solana transaction -- on any cluster, including devnet --
+until the operator has supplied four things explicitly:
+
+1. the keypair path to sign with
+2. the public key that keypair resolves to
+3. the target cluster, named
+4. confirmation of the balance available
+
+`solana-keygen new`, `solana airdrop` and `anchor deploy` are not run on an agent's own
+initiative. What is permitted is `anchor build` and localnet unit tests, neither of which
+touches a live cluster or spends anything.
+
+The gate exists because the alternative was tried. Automated deployment steps have
+previously executed against live clusters without the operator intending it, and a
+transaction cannot be recalled. The specific hazard is not a large loss on devnet; it is
+that an automated deploy establishes a program id and an upgrade authority that then have
+to be lived with.
+
+For the same reason, no fallback or retry hook may be attached to a transaction path.
+"Automatically top up and retry on insufficient funds" converts a failed deploy that
+someone would have investigated into a successful one that nobody reviewed. A transaction
+that fails must surface as a failure.
+
+---
+
+## 7. Deploy identity isolation
+
+Real service code lives in private repositories under a single account. Public
+repositories receive only what is deliberately staged for them, and only after the account
+is designated. An agent does not create, push to or delete public repositories on its own
+judgement.
+
+Several build sessions run concurrently on one machine, which makes the failure mode here
+specific: any command that writes global tool state silently repoints every other session.
+`railway login`, `vercel login`, `gh auth switch` and `solana config set` are prohibited
+for that reason. Each project uses per-project token wrappers that route by working
+directory instead, so identity is a property of where a command runs rather than of when it
+last ran.
+
+Two related prohibitions, both from measured failures rather than theory:
+
+- `railway up` is not used. It hangs indefinitely in `INITIALIZING`. Deployment is by
+  `git push` to a connected repository.
+- `vercel deploy` and `vercel --prod` are not used. They upload stale prebuilt output.
+
+Installed is not the same as working. A shell profile that rewrites `PATH` after the
+wrapper directory is added, or a git credential helper holding a different account, both
+defeat the isolation without producing an error -- the command simply goes out as the wrong
+identity. The isolation is therefore verified by a doctor command at session start rather
+than assumed from the presence of the wrappers.
+
+---
+
+## 8. Rate limiting
+
+The API applies an in-memory sliding window keyed on the first hop of `X-Forwarded-For`,
+per instance. Preflight `OPTIONS` and the health path are exempt: a throttled preflight
+presents to a browser as a CORS misconfiguration, and a platform health probe on a fixed
+interval would otherwise consume the budget that users need.
+
+One property must be understood before this limit is tuned. The front end reaches the API
+through server-side route handlers, so every visitor arrives from one egress address and
+shares a single bucket. The limit is an aggregate, not a per-person allowance. Either it is
+sized for total traffic or the proxy forwards the original client address. This was found
+by measurement, not by review: a per-IP limit sized for individuals throttled the entire
+local development environment as soon as two clients polled at once.
+
+Multi-instance deployment requires moving the window to shared storage. Until then, the
+enforced limit is per instance, and this document says so rather than implying a global
+one.
+
+---
+
+## 9. Known limitations
+
+The controls above reduce specific exposures. These are not among them.
+
+**Custody risk cannot be mitigated, only disclosed.** Every asset LODZ accepts is a claim
+issued by a third party against bitcoin held elsewhere. cbBTC and xBTC both have mint and
+freeze authorities that are ordinary keypairs, measured on chain -- their issuers can
+freeze any account holding them, including a vault's, with no technical failure occurring
+and no action available to LODZ. cbBTC and the Portal WBTC have no automated reserve proof
+on any chain; their backing rests on issuer disclosure. No amount of program hardening
+changes any of this. It is reported on every risk response and in `risk-spec.md`, and
+reporting is the entire available remedy.
+
+**Bridge risk is inherited, not managed.** The Portal WBTC path passes through the bridge
+that lost $326M to a signature verification bypass in 2022. That loss was covered by a
+backer, which is a fact about that backer and not a property of the bridge.
+
+**Upgrade authority and external prices are the same two surfaces that were combined in
+the Drift compromise** of 2026-04-01, which took $295M and was not recovered. LODZ will
+hold an upgrade authority and will read external prices. The ceilings in section 5.6 bound
+what a compromised authority can change; they do not prevent the compromise.
+
+**The divergence loss estimate is a floor, not a forecast.** It uses a full-range constant
+product formula over a short observed window, so a concentrated position loses at least
+the stated amount and possibly more, and annualising a calm week understates while a
+violent one overstates. Where no estimate can be produced the seam is marked
+`il_unknown` and no net figure is given, rather than substituting a zero.
+
+**Cross-source verification catches disagreement, not shared error.** If DefiLlama and a
+venue's own API are both wrong in the same direction, the check passes. It detects
+staleness on one side; it does not establish truth.
+
+**Rate limiting is per instance and in memory.** It does not survive a restart and does not
+coordinate across replicas.
+
+**The program is unaudited and undeployed.** No third-party review has been performed.
+
+**Points programmes are not measured.** DefiLlama's reward field captures token emissions
+and does not capture unissued points. The measured zero-emissions finding is a statement
+about token emissions specifically. No unauthenticated public source for points accrual was
+found during research, and that gap is unverified rather than assumed to be empty.
+
+---
+
+## 10. Verification commands
+
+Each of these was run against the working tree on 2026-08-15 with the result stated.
+
+```bash
+# No credential reaches the browser bundle. Control query proves the scan reads the bundle.
+grep -rlE 'api-key=|helius-rpc|laserstream' apps/web/.next/ | wc -l     # 0 of 1302 files
+grep -rl 'lodz' apps/web/.next/ | wc -l                                 # 172 (control)
+
+# No hardcoded key in the service source.
+grep -rn "api-key=" apps/service/src/ | grep -v "os.environ\|getenv\|Settings"   # 0
+
+# Wildcard CORS refuses to start. Exits non-zero, never binds.
+CORS_ORIGINS='*' uvicorn src.main:app --port 8029                       # ValueError, exit 1
+
+# Prohibited-language scan. The pattern is written with bracket escapes so that this
+# document does not itself contain the phrases it forbids, and therefore passes the
+# same check it describes. The enforcing copy lives in github/gated-push.sh.
+PAT='risk[-]free|guarantee[d]|native[ ]bitcoin'
+grep -rniE "$PAT" apps/service/src/ docs/security.md                    # 0
+
+# The port variable is expanded by a shell rather than passed as a literal.
+grep -rnE '\$\{?[A-Z_]+' apps/service/railway.json                      # startCommand only
+```
+
+The last one is a fix rather than a check. The start command previously passed a bare
+`$PORT`, which Railway execs directly, so the process received the four literal characters
+and failed to parse a port. It survived unnoticed because a second file declared a
+different, correct command, and the two disagreed silently. There is now one start command
+in one file.
