@@ -180,12 +180,26 @@ programs/lodz-vault/     Anchor program
 tests/                   integration tests against a local validator
 scripts/                 instruction discriminator helper
 idl/lodz_vault.json      generated IDL, checked in so clients can build without Anchor
-docs/risk-spec.md        risk layers, asset table, on-chain enforcement, incident record
+docs/architecture.md     repository split, data flow, PDA and instruction tables
 docs/seam-spec.md        seam schema, yield classification, display rules, IL methodology
+docs/risk-spec.md        risk layers, asset table, on-chain enforcement, incident record
+docs/security.md         secret boundaries, Anchor patterns, deployment gate
 ```
 
 The specifications cite the source lines that enforce them, so a claim in `docs/` can be
 checked against `programs/lodz-vault/src/` without taking either on trust.
+
+## Client
+
+```
+npm i -g lodz-cli
+LODZ_API_URL=https://api.lodz.money lodz assay --btc 1.5
+```
+
+`deposit` and `redeem` build and describe a request but do not sign or submit, because
+this program is not deployed to mainnet. Everything that reads -- `assay`, `seams`,
+`queue` -- works against the live API today. See
+[lodz-sdk](https://github.com/LodzMoney/lodz-sdk).
 
 - `adit` is the deposit entry point.
 - `seam` is a yield source with a kind, a rate and a risk tier.
