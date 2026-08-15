@@ -1,11 +1,16 @@
 //! On-chain accounts, PDA seeds and the bounds the program enforces on its
 //! own configuration.
 //!
-//! Every account carries an explicit `LEN` and a `reserved` tail. The tail is
-//! upgrade headroom: an Anchor account layout can grow into trailing reserved
-//! bytes without a migration, but it can never shrink or reorder, so the space
-//! is claimed while it is still free. `space = 8 + T::LEN`, where 8 is the
-//! Anchor discriminator.
+//! Every account carries an explicit `LEN`. Most also carry a `reserved` tail,
+//! which is upgrade headroom: an Anchor account layout can grow into trailing
+//! reserved bytes without a migration, but it can never shrink or reorder, so
+//! the space is claimed while it is still free. `space = 8 + T::LEN`, where 8
+//! is the Anchor discriminator.
+//!
+//! [`Miner`] no longer has any. Its three counterparty fields consumed the tail
+//! exactly on 2026-08-16, so the next field added there needs a realloc rather
+//! than a free 32 bytes. That is the cost of having spent it, recorded here
+//! because the next person to add a field will look at this paragraph first.
 //!
 //! The `LEN` arithmetic is asserted against real Borsh output in
 //! `tests::declared_lengths_match_the_structs`. A `LEN` that disagrees with
@@ -110,9 +115,16 @@ pub const INTERNAL_DECIMALS: u8 = 8;
 /// SPL and Token-2022 mints in scope carry 0..=18 decimals.
 pub const MAX_MINT_DECIMALS: u8 = 18;
 
-/// Headlamp risk tiers run 1 (lowest) to 5 (highest). There is no tier 0:
-/// every representation of BTC on Solana carries bridge or custody risk, and a
-/// zero would read as "none".
+/// Layer severity runs 1 (lowest) to 5 (highest). There is no tier 0: every
+/// representation of BTC on Solana carries bridge or custody risk, and a zero
+/// would read as "none".
+///
+/// This is the per-layer scale in `packages/headlamp-risk`, not the
+/// `low`/`medium`/`high` band it reports. `docs/risk-spec.md` 2.4 derives the
+/// one-way conversion (`{1,2}` low, `{3}` medium, `{4,5}` high) and 2.5 records
+/// that no production source fills these in yet -- the value on an Adit or a
+/// Seam is currently an assertion by whoever registered it, and the chain
+/// checks only its range and the owning stope's ceiling.
 pub const MIN_RISK_TIER: u8 = 1;
 pub const MAX_RISK_TIER: u8 = 5;
 
@@ -264,8 +276,10 @@ impl RiskProfile {
         }
     }
 
-    /// Highest headlamp risk tier a seam may carry to be routable from this
-    /// stope.
+    /// Highest layer severity a seam may carry to be routable from this stope.
+    ///
+    /// The 1..5 scale, not the `low`/`medium`/`high` band -- see
+    /// `MIN_RISK_TIER` above and `docs/risk-spec.md` 2.4.
     pub fn max_risk_tier(&self) -> u8 {
         match self {
             Self::Conservative => 2,

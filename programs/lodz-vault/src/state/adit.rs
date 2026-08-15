@@ -59,7 +59,12 @@ pub struct Adit {
     /// variant is a token on Solana standing in for bitcoin held elsewhere,
     /// never bitcoin on the Bitcoin network itself.
     pub custody_kind: CustodyKind,
-    /// Headlamp tier, 1 (lowest) to 5 (highest).
+    /// Layer severity, 1 (lowest) to 5 (highest).
+    ///
+    /// The same 1..5 scale `packages/headlamp-risk` uses per risk layer, not
+    /// the `low`/`medium`/`high` band that package reports -- those are a
+    /// presentation bucket over a composite of these. `docs/risk-spec.md` 2.4
+    /// carries the conversion and the reason it only runs one way.
     pub risk_tier: u8,
     /// Decimals of `asset_mint`, cached so the payout path can pass them to
     /// `transfer_checked` without deserializing the mint twice.

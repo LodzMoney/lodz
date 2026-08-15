@@ -22,12 +22,17 @@ pub struct Seam {
     /// stope's emissions exposure is the sum over its own seams and nothing
     /// else.
     pub stope_id: u8,
-    /// Sustainable or emissions. Immutable after registration: changing it
-    /// would silently rewrite the meaning of `realized_yield` already booked
-    /// under the old kind.
+    /// Sustainable, emissions or counterparty. Immutable after registration:
+    /// changing it would silently rewrite the meaning of `realized_yield`
+    /// already booked under the old kind.
     pub yield_kind: YieldKind,
-    /// Headlamp tier, 1 (lowest) to 5 (highest). Bounded by the owning
+    /// Layer severity, 1 (lowest) to 5 (highest). Bounded by the owning
     /// stope's `RiskProfile::max_risk_tier`.
+    ///
+    /// See `Adit::risk_tier` for what the number is on, and
+    /// `docs/risk-spec.md` 2.5 for what it does not yet have: there is no
+    /// production custody ledger, so this value is asserted by whoever
+    /// registers the seam rather than measured.
     pub risk_tier: u8,
     /// Inactive seams cannot accrue and cannot hold an allocation.
     pub active: bool,

@@ -37,7 +37,13 @@ pub struct Orecart {
     /// Shares burned to open this ticket. They are gone from the stope's share
     /// pool already; this field is the record, not a reservation.
     pub shares_burned: u64,
-    /// Principal owed, in internal accounting units, before the fee.
+    /// What the burned shares were worth at request time, in internal
+    /// accounting units, before the fee.
+    ///
+    /// This is principal *plus* the position's realized yield, because
+    /// `accrue_yield` raises the pool without minting shares. The principal
+    /// alone is `normalized_amount - fee_basis_normalized`, and that part is
+    /// what comes back one for one.
     pub normalized_amount: u64,
     /// Fee, in internal accounting units.
     pub fee_normalized: u64,
