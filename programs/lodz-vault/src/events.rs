@@ -123,13 +123,15 @@ pub struct YieldAccrued {
     pub seam_id: u16,
     pub stope_id: u8,
     pub reporter: Pubkey,
-    /// The whole point of this event. Never summed with the other kind.
+    /// The whole point of this event. Never summed with the other kinds.
     pub yield_kind: YieldKind,
     pub amount: u64,
     pub seam_realized_yield: u64,
-    /// Stope lifetime totals after this accrual, kept apart.
+    /// Stope lifetime totals after this accrual, kept apart. An indexer that
+    /// wants a blended number has to add these itself and say that it did.
     pub stope_realized_sustainable: u64,
     pub stope_realized_emissions: u64,
+    pub stope_realized_counterparty: u64,
     pub stope_total_shares: u64,
     /// Zero for a sustainable seam. For an emissions seam this is when the
     /// number above stops arriving.
@@ -148,6 +150,17 @@ pub struct RedemptionRequested {
     pub normalized_amount: u64,
     pub fee_bps: u16,
     pub fee_normalized: u64,
+    /// The realized yield the fee was charged on. The fee never touches
+    /// `principal_normalized`.
+    pub fee_basis_normalized: u64,
+    /// `normalized_amount - fee_basis_normalized`. This comes back one for
+    /// one; publishing it beside the fee is what makes that checkable from the
+    /// event stream alone.
+    pub principal_normalized: u64,
+    /// The fee basis, split by where the yield came from.
+    pub claimed_sustainable: u64,
+    pub claimed_emissions: u64,
+    pub claimed_counterparty: u64,
     pub gross_amount: u64,
     pub payout_amount: u64,
     pub queue_position: u64,

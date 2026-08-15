@@ -161,9 +161,10 @@ pub fn deposit(ctx: Context<MakeDeposit>, stope_id: u8, amount: u64) -> Result<(
     // claiming a share of yield that was accrued before they arrived.
     let index_sustainable = ctx.accounts.stope.yield_index_sustainable;
     let index_emissions = ctx.accounts.stope.yield_index_emissions;
+    let index_counterparty = ctx.accounts.stope.yield_index_counterparty;
     ctx.accounts
         .miner
-        .settle_indices(index_sustainable, index_emissions)?;
+        .settle_indices(index_sustainable, index_emissions, index_counterparty)?;
 
     let miner = &mut ctx.accounts.miner;
     miner.shares = miner

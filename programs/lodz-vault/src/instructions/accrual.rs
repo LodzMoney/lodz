@@ -188,6 +188,7 @@ pub fn accrue_yield(
         .ok_or(LodzError::MathOverflow)?;
     let stope_realized_sustainable = stope.realized_sustainable;
     let stope_realized_emissions = stope.realized_emissions;
+    let stope_realized_counterparty = stope.realized_counterparty;
     let stope_total_shares = stope.total_shares;
 
     let adit = &mut ctx.accounts.adit;
@@ -216,6 +217,7 @@ pub fn accrue_yield(
         seam_realized_yield,
         stope_realized_sustainable,
         stope_realized_emissions,
+        stope_realized_counterparty,
         stope_total_shares,
         emission_ends_at,
         timestamp: now,
