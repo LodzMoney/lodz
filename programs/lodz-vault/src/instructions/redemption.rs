@@ -73,11 +73,19 @@ pub struct RequestRedemption<'info> {
     )]
     pub orecart_queue: Box<Account<'info, OrecartQueue>>,
 
+    /// Seeded with `stope_id` as well as `ticket_index`, because the counter
+    /// `ticket_index` must match lives on the per-stope `Miner`. See
+    /// `ORECART_SEED` for the lockup this prevents.
     #[account(
         init,
         payer = owner,
         space = 8 + Orecart::LEN,
-        seeds = [ORECART_SEED, owner.key().as_ref(), &ticket_index.to_le_bytes()],
+        seeds = [
+            ORECART_SEED,
+            owner.key().as_ref(),
+            &stope_id.to_le_bytes(),
+            &ticket_index.to_le_bytes(),
+        ],
         bump
     )]
     pub orecart: Box<Account<'info, Orecart>>,
@@ -121,9 +129,10 @@ pub fn request_redemption(
     // Bank the position's yield attribution before the share count changes.
     let index_sustainable = ctx.accounts.stope.yield_index_sustainable;
     let index_emissions = ctx.accounts.stope.yield_index_emissions;
+    let index_counterparty = ctx.accounts.stope.yield_index_counterparty;
     ctx.accounts
         .miner
-        .settle_indices(index_sustainable, index_emissions)?;
+        .settle_indices(index_sustainable, index_emissions, index_counterparty)?;
 
     let shares_before = ctx.accounts.miner.shares;
     require!(shares <= shares_before, LodzError::InsufficientShares);
@@ -138,8 +147,46 @@ pub fn request_redemption(
     )?;
     require!(normalized > 0, LodzError::ZeroPayout);
 
+    // Move the position's yield attribution from "still held" to "taken out",
+    // in proportion to the shares being redeemed, keeping the three sources
+    // apart on the way through. Computed before the fee because the fee is
+    // charged on their sum and on nothing else.
+    let claimed_sustainable = mul_div_floor(
+        ctx.accounts.miner.accrued_sustainable,
+        shares,
+        shares_before,
+    )?;
+    let claimed_emissions =
+        mul_div_floor(ctx.accounts.miner.accrued_emissions, shares, shares_before)?;
+    let claimed_counterparty = mul_div_floor(
+        ctx.accounts.miner.accrued_counterparty,
+        shares,
+        shares_before,
+    )?;
+
+    // The fee is charged on realized yield, never on principal.
+    //
+    // "Principal is returned one for one in the representation it came in" is
+    // a design commitment, not a marketing line: it is what the Orecart is
+    // for. Charging the fee on the gross would quietly make it 1:0.999 -- and
+    // for a position whose yield is smaller than the fee rate, materially
+    // worse. On a chain where the measured BTC lending yield is 0.00459 %
+    // (docs/research/btc-on-solana.md) that is the ordinary case, not a corner
+    // one.
+    //
+    // The `min` is a floor under the invariant rather than an expected branch:
+    // yield can never exceed the position's value today, but a future
+    // loss-recording instruction could lower `total_deposits`, and the promise
+    // has to survive that without re-deriving this formula.
+    let fee_basis_normalized = claimed_sustainable
+        .checked_add(claimed_emissions)
+        .ok_or(LodzError::MathOverflow)?
+        .checked_add(claimed_counterparty)
+        .ok_or(LodzError::MathOverflow)?
+        .min(normalized);
+
     let fee_bps = ctx.accounts.vault_config.fee_bps;
-    let fee_normalized = bps_fraction(normalized, fee_bps)?;
+    let fee_normalized = bps_fraction(fee_basis_normalized, fee_bps)?;
     let payout_normalized = normalized.saturating_sub(fee_normalized);
 
     let conversion_num = ctx.accounts.adit.conversion_num;
@@ -161,17 +208,6 @@ pub fn request_redemption(
         .min(ctx.accounts.vault_config.max_redemption_delay_sec);
     let claimable_at = now.checked_add(total_delay).ok_or(LodzError::MathOverflow)?;
 
-    // Move the position's yield attribution from "still held" to "taken out",
-    // in proportion to the shares being redeemed, keeping the two sources
-    // apart on the way through.
-    let claimed_sustainable = mul_div_floor(
-        ctx.accounts.miner.accrued_sustainable,
-        shares,
-        shares_before,
-    )?;
-    let claimed_emissions =
-        mul_div_floor(ctx.accounts.miner.accrued_emissions, shares, shares_before)?;
-
     let owner_key = ctx.accounts.owner.key();
     let queue_position = ctx.accounts.orecart_queue.tail;
 
@@ -187,6 +223,9 @@ pub fn request_redemption(
         .ok_or(LodzError::MathOverflow)?;
     miner.accrued_sustainable = miner.accrued_sustainable.saturating_sub(claimed_sustainable);
     miner.accrued_emissions = miner.accrued_emissions.saturating_sub(claimed_emissions);
+    miner.accrued_counterparty = miner
+        .accrued_counterparty
+        .saturating_sub(claimed_counterparty);
     miner.claimed_sustainable = miner
         .claimed_sustainable
         .checked_add(claimed_sustainable)
@@ -194,6 +233,10 @@ pub fn request_redemption(
     miner.claimed_emissions = miner
         .claimed_emissions
         .checked_add(claimed_emissions)
+        .ok_or(LodzError::MathOverflow)?;
+    miner.claimed_counterparty = miner
+        .claimed_counterparty
+        .checked_add(claimed_counterparty)
         .ok_or(LodzError::MathOverflow)?;
     miner.last_action_at = now;
 
@@ -240,6 +283,7 @@ pub fn request_redemption(
     ticket.requested_at = now;
     ticket.claimable_at = claimable_at;
     ticket.claimed_at = 0;
+    ticket.fee_basis_normalized = fee_basis_normalized;
 
     emit!(RedemptionRequested {
         owner: owner_key,
@@ -251,6 +295,11 @@ pub fn request_redemption(
         normalized_amount: normalized,
         fee_bps,
         fee_normalized,
+        fee_basis_normalized,
+        principal_normalized: normalized.saturating_sub(fee_basis_normalized),
+        claimed_sustainable,
+        claimed_emissions,
+        claimed_counterparty,
         gross_amount,
         payout_amount,
         queue_position,
@@ -295,7 +344,12 @@ pub struct ClaimRedemption<'info> {
 
     #[account(
         mut,
-        seeds = [ORECART_SEED, owner.key().as_ref(), &ticket_index.to_le_bytes()],
+        seeds = [
+            ORECART_SEED,
+            owner.key().as_ref(),
+            &stope_id.to_le_bytes(),
+            &ticket_index.to_le_bytes(),
+        ],
         bump = orecart.bump,
         has_one = owner @ LodzError::Unauthorized,
         has_one = asset_mint @ LodzError::AditMintMismatch,

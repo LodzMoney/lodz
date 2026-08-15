@@ -1,6 +1,7 @@
 //! Orecart -- the redemption queue.
 //!
-//! `Orecart` is one ticket, at `["orecart", owner, ticket_index(u32 LE)]`.
+//! `Orecart` is one ticket, at
+//! `["orecart", owner, stope_id(u8), ticket_index(u32 LE)]`.
 //! `OrecartQueue` is the per-stope aggregate, at
 //! `["orecart_queue", stope_id(u8)]`.
 //!
@@ -55,8 +56,18 @@ pub struct Orecart {
     pub claimable_at: i64,
     pub claimed_at: i64,
 
+    // -- appended 2026-08-16, into the reserved tail --------------------------
+    /// What `fee_normalized` was actually charged on: the realized yield
+    /// attributable to `shares_burned`, and nothing else.
+    ///
+    /// `normalized_amount - fee_basis_normalized` is the principal in this
+    /// ticket, and the fee cannot reach it. Recorded rather than derived so
+    /// that "principal is returned one for one" is auditable from the ticket
+    /// alone, without replaying the position's accrual history.
+    pub fee_basis_normalized: u64,
+
     pub _padding: [u8; 7],
-    pub reserved: [u8; 32],
+    pub reserved: [u8; 24],
 }
 
 impl Orecart {
@@ -67,8 +78,9 @@ impl Orecart {
         + 8 * 7                   // shares_burned, normalized_amount, fee_normalized,
                                   // gross_amount, fee_amount, payout_amount, queue_position
         + 8 * 3                   // requested_at, claimable_at, claimed_at
+        + 8                       // fee_basis_normalized
         + 7                       // _padding
-        + 32; // reserved
+        + 24; // reserved (was 32; 8 bytes went to fee_basis_normalized)
 
     pub fn is_claimable_at(&self, now: i64) -> bool {
         self.status == TicketStatus::Queued && now >= self.claimable_at
