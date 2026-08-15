@@ -119,7 +119,13 @@ PDA_SEEDS = [
     ("stope", ['b"stope"', "stope_id (u8 LE)"]),
     ("seam", ['b"seam"', "seam_id (u16 LE)"]),
     ("miner", ['b"miner"', "owner (32)", "stope_id (u8 LE)"]),
-    ("orecart", ['b"orecart"', "owner (32)", "ticket_index (u32 LE)"]),
+    # stope_id is required here. The counter that `ticket_index` must match,
+    # Miner::ticket_count, lives on a per-stope account, so without stope_id in
+    # this seed a depositor holding two stopes resolves both positions to the
+    # same ticket address: the second one can never be redeemed, and the
+    # counter never advances because it only advances on success. Measured on
+    # devnet 2026-08-16.
+    ("orecart", ['b"orecart"', "owner (32)", "stope_id (u8 LE)", "ticket_index (u32 LE)"]),
     ("orecart_queue", ['b"orecart_queue"', "stope_id (u8 LE)"]),
     ("keeper", ['b"keeper"', "authority (32)"]),
 ]

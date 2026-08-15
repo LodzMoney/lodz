@@ -500,6 +500,10 @@
               },
               {
                 "kind": "arg",
+                "path": "stope_id"
+              },
+              {
+                "kind": "arg",
                 "path": "ticket_index"
               }
             ]
@@ -1599,6 +1603,11 @@
         },
         {
           "name": "orecart",
+          "docs": [
+            "Seeded with `stope_id` as well as `ticket_index`, because the counter",
+            "`ticket_index` must match lives on the per-stope `Miner`. See",
+            "`ORECART_SEED` for the lockup this prevents."
+          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -1617,6 +1626,10 @@
               {
                 "kind": "account",
                 "path": "owner"
+              },
+              {
+                "kind": "arg",
+                "path": "stope_id"
               },
               {
                 "kind": "arg",
@@ -2677,6 +2690,11 @@
       "code": 6052,
       "name": "TreasuryMismatch",
       "msg": "The supplied treasury does not match the one recorded in the config."
+    },
+    {
+      "code": 6053,
+      "name": "CounterpartyAllocationExceeded",
+      "msg": "Counterparty allocation would exceed what this stope's risk profile permits."
     }
   ],
   "types": [
@@ -3322,12 +3340,14 @@
     {
       "name": "Miner",
       "docs": [
-        "A depositor's principal claim and their two separate yield balances.",
+        "A depositor's principal claim and their three separate yield balances.",
         "",
         "The per-source split runs all the way down to here. A miner can read how",
-        "much of their own accrued yield came from something a counterparty is",
-        "paying versus from an emission schedule with an end date, which is the",
-        "number that decides whether the position is worth keeping."
+        "much of their own accrued yield came from a fee somebody is paying, how",
+        "much from an emission schedule with an end date, and how much from another",
+        "trader's losses. Those three answer different questions about whether the",
+        "position is worth keeping, which is why they are never stored as one",
+        "number."
       ],
       "type": {
         "kind": "struct",
@@ -3348,8 +3368,11 @@
             "name": "ticket_count",
             "docs": [
               "Next Orecart ticket index for this position. Ticket PDAs are",
-              "`[\"orecart\", owner, ticket_index(u32 LE)]`, so this is the counter the",
-              "client must read before building a redemption transaction."
+              "`[\"orecart\", owner, stope_id(u8), ticket_index(u32 LE)]`, so this is the",
+              "counter the client must read before building a redemption transaction.",
+              "",
+              "This counter is per (owner, stope). The ticket PDA carries `stope_id`",
+              "for exactly that reason -- see `ORECART_SEED`."
             ],
             "type": "u32"
           },
@@ -3430,6 +3453,21 @@
             "type": "i64"
           },
           {
+            "name": "accrued_counterparty",
+            "docs": [
+              "Settled counterparty yield, in internal accounting units."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "claimed_counterparty",
+            "type": "u64"
+          },
+          {
+            "name": "index_snapshot_counterparty",
+            "type": "u128"
+          },
+          {
             "name": "_padding",
             "type": {
               "array": [
@@ -3443,7 +3481,7 @@
             "type": {
               "array": [
                 "u8",
-                32
+                0
               ]
             }
           }
@@ -3568,6 +3606,19 @@
             "type": "i64"
           },
           {
+            "name": "fee_basis_normalized",
+            "docs": [
+              "What `fee_normalized` was actually charged on: the realized yield",
+              "attributable to `shares_burned`, and nothing else.",
+              "",
+              "`normalized_amount - fee_basis_normalized` is the principal in this",
+              "ticket, and the fee cannot reach it. Recorded rather than derived so",
+              "that \"principal is returned one for one\" is auditable from the ticket",
+              "alone, without replaying the position's accrual history."
+            ],
+            "type": "u64"
+          },
+          {
             "name": "_padding",
             "type": {
               "array": [
@@ -3581,7 +3632,7 @@
             "type": {
               "array": [
                 "u8",
-                32
+                24
               ]
             }
           }
@@ -3772,6 +3823,38 @@
           },
           {
             "name": "fee_normalized",
+            "type": "u64"
+          },
+          {
+            "name": "fee_basis_normalized",
+            "docs": [
+              "The realized yield the fee was charged on. The fee never touches",
+              "`principal_normalized`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "principal_normalized",
+            "docs": [
+              "`normalized_amount - fee_basis_normalized`. This comes back one for",
+              "one; publishing it beside the fee is what makes that checkable from the",
+              "event stream alone."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "claimed_sustainable",
+            "docs": [
+              "The fee basis, split by where the yield came from."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "claimed_emissions",
+            "type": "u64"
+          },
+          {
+            "name": "claimed_counterparty",
             "type": "u64"
           },
           {
@@ -4233,15 +4316,16 @@
     {
       "name": "Stope",
       "docs": [
-        "One risk-profiled vault: its shares, its principal, and two separate yield",
-        "accumulators.",
+        "One risk-profiled vault: its shares, its principal, and three separate",
+        "yield accumulators.",
         "",
         "There is no combined `total_yield` field anywhere in this struct, and that",
-        "is deliberate. Sustainable and emissions yield are accumulated, indexed and",
-        "reported apart from each other all the way down to the individual miner,",
-        "because a single blended number cannot answer the only question that",
-        "matters about a BTC yield product: how much of this survives when the",
-        "emission schedule ends."
+        "is deliberate. Sustainable, emissions and counterparty yield are",
+        "accumulated, indexed and reported apart from each other all the way down to",
+        "the individual miner, because a single blended number cannot answer the",
+        "only questions that matter about a BTC yield product: how much of this",
+        "survives when the emission schedule ends, and how much of it is somebody",
+        "else's loss rather than a fee anyone is paying."
       ],
       "type": {
         "kind": "struct",
@@ -4373,6 +4457,37 @@
             "type": "i64"
           },
           {
+            "name": "yield_index_counterparty",
+            "docs": [
+              "Per-share accumulator for counterparty yield, scaled by",
+              "`YIELD_INDEX_SCALE`."
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "realized_counterparty",
+            "docs": [
+              "Lifetime realized counterparty yield, in internal accounting units."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "counterparty_bps",
+            "docs": [
+              "The part of `allocated_bps` sitting on seams whose yield kind is",
+              "[`YieldKind::Counterparty`]. Capped by",
+              "`RiskProfile::max_counterparty_bps`.",
+              "",
+              "Unlike the two accumulators above, this one is a *running total over",
+              "existing seams*, so a stope that already held counterparty weight when",
+              "this field was introduced reads 0 here and under-counts. On a stope",
+              "whose ceiling is 0 that is harmless -- every further change is rejected",
+              "anyway -- but it is the reason a field like this cannot simply be",
+              "appended on a live deployment without reconciling it."
+            ],
+            "type": "u16"
+          },
+          {
             "name": "_padding",
             "type": {
               "array": [
@@ -4386,7 +4501,7 @@
             "type": {
               "array": [
                 "u8",
-                64
+                38
               ]
             }
           }
@@ -4704,7 +4819,7 @@
           {
             "name": "yield_kind",
             "docs": [
-              "The whole point of this event. Never summed with the other kind."
+              "The whole point of this event. Never summed with the other kinds."
             ],
             "type": {
               "defined": {
@@ -4723,12 +4838,17 @@
           {
             "name": "stope_realized_sustainable",
             "docs": [
-              "Stope lifetime totals after this accrual, kept apart."
+              "Stope lifetime totals after this accrual, kept apart. An indexer that",
+              "wants a blended number has to add these itself and say that it did."
             ],
             "type": "u64"
           },
           {
             "name": "stope_realized_emissions",
+            "type": "u64"
+          },
+          {
+            "name": "stope_realized_counterparty",
             "type": "u64"
           },
           {
@@ -4756,10 +4876,26 @@
         "How a seam produces its yield.",
         "",
         "This split is the product. A protocol that reports one blended APY cannot",
-        "tell a depositor whether the number survives next quarter, so the two are",
+        "tell a depositor whether the number survives next quarter, so the kinds are",
         "never summed into a single field anywhere in this program: separate",
         "accumulators on the [`Stope`], separate accumulators on the [`Miner`], and",
-        "a `yield_kind` on every `YieldAccrued` event."
+        "a `yield_kind` on every `YieldAccrued` event.",
+        "",
+        "# Why three and not two",
+        "",
+        "The measurement in `docs/research/btc-on-solana.md` found a third source on",
+        "Solana that looks sustainable and is not: a delta-neutral market-making",
+        "vault paying 214.828 % whose yield is the losses of the traders on the",
+        "other side. It does not end on a schedule, so it is not emissions; nobody",
+        "is paying it as a fee for a service, so it is not sustainable. Filing it",
+        "under either one is a false statement in the ledger, and the ledger of",
+        "where yield comes from is the entire product. The off-chain half",
+        "(`assay-engine`, the service API, the site) has carried three kinds from",
+        "the start; this enum is what makes the chain agree with them.",
+        "",
+        "Variants are appended, never reordered: the Borsh discriminant of",
+        "`Sustainable` (0) and `Emissions` (1) is fixed by every account already",
+        "written."
       ],
       "type": {
         "kind": "enum",
@@ -4769,6 +4905,9 @@
           },
           {
             "name": "Emissions"
+          },
+          {
+            "name": "Counterparty"
           }
         ]
       }
