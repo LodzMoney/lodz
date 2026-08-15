@@ -140,8 +140,15 @@ describe("lodz_vault", () => {
   const seamPda = (id: number) => pda([Buffer.from("seam"), u16le(id)], programId);
   const minerPda = (owner: PublicKey, stopeId: number) =>
     pda([Buffer.from("miner"), owner.toBuffer(), u8le(stopeId)], programId);
-  const orecartPda = (owner: PublicKey, index: number) =>
-    pda([Buffer.from("orecart"), owner.toBuffer(), u32le(index)], programId);
+  // stope_id is part of the seed. The counter `ticket_index` must equal lives
+  // on the per-stope Miner, so without it a depositor in two stopes collides
+  // on ticket 0 and can never redeem the second position. Measured on devnet
+  // against the first deployment; see ORECART_SEED in state/mod.rs.
+  const orecartPda = (owner: PublicKey, stopeId: number, index: number) =>
+    pda(
+      [Buffer.from("orecart"), owner.toBuffer(), u8le(stopeId), u32le(index)],
+      programId
+    );
   const keeperPda = (auth: PublicKey) =>
     pda([Buffer.from("keeper"), auth.toBuffer()], programId);
 
@@ -701,6 +708,124 @@ describe("lodz_vault", () => {
     assert.equal(emissions.realizedYield.toNumber(), 7_000_000);
     assert.deepEqual(sustainable.yieldKind, { sustainable: {} });
     assert.deepEqual(emissions.yieldKind, { emissions: {} });
+    // Nothing leaked into the third kind.
+    assert.equal(stope.realizedCounterparty.toNumber(), 0);
+  });
+
+  /**
+   * Counterparty yield is a third kind, not a flavour of the other two.
+   *
+   * The measurement in docs/research/btc-on-solana.md found a Solana vault
+   * paying 214.828 percent out of the losses of the traders on the other side.
+   * It has no emission schedule, so it is not emissions; nobody is paying it
+   * as a fee, so it is not sustainable. Recording it as either one would make
+   * the ledger state something untrue, and the ledger of where yield comes
+   * from is the product.
+   */
+  it("books counterparty yield into a third accumulator, touching neither other", async () => {
+    const COUNTERPARTY_SEAM = 4;
+
+    await program.methods
+      .registerSeam(COUNTERPARTY_SEAM, AGGRESSIVE, {
+        venue: ascii("counterparty-test-venue", 32),
+        venueProgram: PublicKey.default,
+        yieldKind: { counterparty: {} },
+        allocationBps: 3000,
+        riskTier: 5,
+        // No end date: a counterparty seam has no schedule to disclose, so it
+        // is held to the sustainable rule rather than the emissions one.
+        emissionEndsAt: new BN(0),
+        emissionMint: PublicKey.default,
+      })
+      .accountsPartial({
+        authority: authority.publicKey,
+        vaultConfig,
+        stope: stopePda(AGGRESSIVE),
+        assetMint: btcMint,
+        adit,
+        seam: seamPda(COUNTERPARTY_SEAM),
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+
+    const seam = await program.account.seam.fetch(seamPda(COUNTERPARTY_SEAM));
+    assert.deepEqual(seam.yieldKind, { counterparty: {} });
+
+    // A counterparty weight is not an emissions weight, so it must not consume
+    // the stope's emissions ceiling.
+    const stope = await program.account.stope.fetch(stopePda(AGGRESSIVE));
+    assert.equal(stope.allocatedBps, 3000);
+    assert.equal(stope.emissionsBps, 0, "counterparty is not emissions");
+  });
+
+  /**
+   * The two chambers that publish "no counterparty" reject it on chain.
+   *
+   * apps/web CHAMBER_POLICY carries admitsCounterparty:false for conservative
+   * and balanced. Until max_counterparty_bps existed the chain enforced
+   * neither: a 2000 bps counterparty seam registered against the balanced
+   * stope on devnet without complaint. A published stance nothing checks is
+   * the failure mode this program is built against.
+   */
+  it("refuses counterparty weight on the profiles that publish none", async () => {
+    for (const [stopeId, seamId] of [
+      [CONSERVATIVE, 93],
+      [BALANCED, 92],
+    ] as const) {
+      await assert.isRejected(
+        program.methods
+          .registerSeam(seamId, stopeId, {
+            venue: ascii("counterparty-refused", 32),
+            venueProgram: PublicKey.default,
+            yieldKind: { counterparty: {} },
+            // One basis point. The ceiling is zero, so size is not the issue.
+            allocationBps: 1,
+            riskTier: stopeId === CONSERVATIVE ? 2 : 3,
+            emissionEndsAt: new BN(0),
+            emissionMint: PublicKey.default,
+          })
+          .accountsPartial({
+            authority: authority.publicKey,
+            vaultConfig,
+            stope: stopePda(stopeId),
+            assetMint: btcMint,
+            adit,
+            seam: seamPda(seamId),
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc(),
+        /CounterpartyAllocationExceeded/
+      );
+
+      const stope = await program.account.stope.fetch(stopePda(stopeId));
+      assert.equal(stope.counterpartyBps, 0, "a rejected change must not apply");
+    }
+  });
+
+  it("refuses a counterparty seam that claims an end date it cannot keep", async () => {
+    await assert.isRejected(
+      program.methods
+        .registerSeam(94, AGGRESSIVE, {
+          venue: ascii("counterparty-with-schedule", 32),
+          venueProgram: PublicKey.default,
+          yieldKind: { counterparty: {} },
+          allocationBps: 100,
+          riskTier: 5,
+          emissionEndsAt: new BN(now() + 30 * DAY),
+          emissionMint: emissionMint,
+        })
+        .accountsPartial({
+          authority: authority.publicKey,
+          vaultConfig,
+          stope: stopePda(AGGRESSIVE),
+          assetMint: btcMint,
+          adit,
+          seam: seamPda(94),
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc(),
+      /EmissionFieldsOnSustainableSeam/
+    );
   });
 
   it("attributes a miner's growth to each source separately", async () => {
@@ -835,7 +960,7 @@ describe("lodz_vault", () => {
   // -------------------------------------------------------------------------
 
   it("issues a ticket that cannot be claimed early", async () => {
-    const ticket = orecartPda(alice.publicKey, 0);
+    const ticket = orecartPda(alice.publicKey, BALANCED, 0);
 
     await program.methods
       .requestRedemption(BALANCED, 0, new BN(ONE_BTC))
@@ -865,6 +990,28 @@ describe("lodz_vault", () => {
       record.feeAmount.toNumber()
     );
 
+    // The fee is charged on realized yield and nothing else. "Principal is
+    // returned one for one" is a design commitment, so the principal in this
+    // ticket -- gross minus the fee basis -- has to survive the fee intact.
+    const feeBasis = record.feeBasisNormalized.toNumber();
+    const principal = record.normalizedAmount.toNumber() - feeBasis;
+    assert.isAbove(feeBasis, 0, "this position has realized yield");
+    assert.isBelow(
+      feeBasis,
+      record.normalizedAmount.toNumber(),
+      "the fee basis is the yield, not the whole redemption"
+    );
+    assert.equal(
+      record.feeNormalized.toNumber(),
+      Math.floor((feeBasis * record.feeBps) / 10_000),
+      "the fee is fee_bps of the yield"
+    );
+    assert.isAtLeast(
+      record.payoutAmount.toNumber(),
+      principal,
+      "the fee must never reach principal"
+    );
+
     // The shares are gone from the stope immediately.
     const miner = await program.account.miner.fetch(minerPda(alice.publicKey, BALANCED));
     assert.equal(miner.shares.toNumber(), ONE_BTC + 1);
@@ -892,7 +1039,7 @@ describe("lodz_vault", () => {
   });
 
   it("pays the ticket once its delay has elapsed, and only once", async () => {
-    const ticket = orecartPda(alice.publicKey, 0);
+    const ticket = orecartPda(alice.publicKey, BALANCED, 0);
     const record = await program.account.orecart.fetch(ticket);
 
     const wait = record.claimableAt.toNumber() - now() + 2;
@@ -956,6 +1103,94 @@ describe("lodz_vault", () => {
         .signers([alice])
         .rpc(),
       /TicketAlreadyClaimed/
+    );
+  });
+
+  /**
+   * Regression: a depositor holding two stopes must be able to redeem both.
+   *
+   * `Miner::ticket_count` is per (owner, stope), so alice's position in a
+   * second stope starts its ticket numbering at 0 again -- while ticket 0 for
+   * alice in BALANCED already exists. When `stope_id` was missing from the
+   * Orecart seed those two resolved to the same address, `init` failed with
+   * "already in use", and the counter could never advance past it because it
+   * only advances on success. The second position became unredeemable.
+   *
+   * Measured against the first devnet deployment on 2026-08-16, on the
+   * ordinary path for a product that sells three risk-profiled stopes. The
+   * assertion below is that ticket 0 of the second stope issues even though
+   * ticket 0 of the first stope was already used.
+   */
+  it("lets a depositor redeem a second stope after using ticket 0 in the first", async () => {
+    const first = await program.account.miner.fetch(minerPda(alice.publicKey, BALANCED));
+    assert.isAbove(
+      first.ticketCount,
+      0,
+      "precondition: alice has already taken ticket 0 in BALANCED"
+    );
+
+    await program.methods
+      .deposit(AGGRESSIVE, new BN(ONE_BTC))
+      .accountsPartial({
+        depositor: alice.publicKey,
+        vaultConfig,
+        adit,
+        stope: stopePda(AGGRESSIVE),
+        miner: minerPda(alice.publicKey, AGGRESSIVE),
+        assetMint: btcMint,
+        depositorToken: aliceBtc,
+        aditVault,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([alice])
+      .rpc();
+
+    const second = await program.account.miner.fetch(
+      minerPda(alice.publicKey, AGGRESSIVE)
+    );
+    assert.equal(second.ticketCount, 0, "a fresh position numbers from zero");
+
+    const ticket = orecartPda(alice.publicKey, AGGRESSIVE, 0);
+    assert.notEqual(
+      ticket.toBase58(),
+      orecartPda(alice.publicKey, BALANCED, 0).toBase58(),
+      "ticket 0 must be a different address in a different stope"
+    );
+
+    await program.methods
+      .requestRedemption(AGGRESSIVE, 0, new BN(ONE_BTC))
+      .accountsPartial({
+        owner: alice.publicKey,
+        vaultConfig,
+        stope: stopePda(AGGRESSIVE),
+        miner: minerPda(alice.publicKey, AGGRESSIVE),
+        orecartQueue: queuePda(AGGRESSIVE),
+        orecart: ticket,
+        adit,
+        assetMint: btcMint,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([alice])
+      .rpc();
+
+    const record = await program.account.orecart.fetch(ticket);
+    assert.equal(record.stopeId, AGGRESSIVE);
+    assert.equal(record.ticketIndex, 0);
+    assert.deepEqual(record.status, { queued: {} });
+
+    // This stope has booked no yield, so the fee basis is zero and the ticket
+    // pays back exactly what went in. This is the sharpest form of the promise
+    // the site makes -- "principal is returned one for one" -- and it is only
+    // true because the fee is charged on yield. On a gross basis this same
+    // ticket would return 25 bps less than the deposit.
+    assert.equal(record.feeBasisNormalized.toNumber(), 0, "no yield accrued here");
+    assert.equal(record.feeNormalized.toNumber(), 0);
+    assert.equal(record.feeAmount.toNumber(), 0);
+    assert.equal(
+      record.payoutAmount.toNumber(),
+      ONE_BTC,
+      "principal returned one for one, exactly"
     );
   });
 
