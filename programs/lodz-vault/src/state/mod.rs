@@ -54,7 +54,20 @@ pub const STOPE_SEED: &[u8] = b"stope";
 pub const SEAM_SEED: &[u8] = b"seam";
 /// `["miner", owner, stope_id(u8)]`
 pub const MINER_SEED: &[u8] = b"miner";
-/// `["orecart", owner, ticket_index(u32 LE)]`
+/// `["orecart", owner, stope_id(u8), ticket_index(u32 LE)]`
+///
+/// `stope_id` is in the seed because `Miner::ticket_count` -- the counter
+/// `request_redemption` requires `ticket_index` to equal -- is *per stope*
+/// (`["miner", owner, stope_id]`). Without `stope_id` here the two namespaces
+/// disagree: a depositor holding positions in two stopes has one ticket
+/// counter per stope but a single ticket address space, so the second stope's
+/// counter (still at 0) resolves to a ticket PDA the first stope already
+/// created. `init` fails with "already in use", the counter never advances
+/// because it only advances on success, and the position can never be
+/// redeemed. Measured on devnet 2026-08-16 against the first deployment:
+/// `Allocate: account 3FU1UL5LBZReQpXh9KHDp2gThdybAf4ofzzUvhXYkfur already in
+/// use`. Selling three risk-profiled stopes makes holding more than one the
+/// normal case, so this stranded principal on the ordinary path.
 pub const ORECART_SEED: &[u8] = b"orecart";
 /// `["orecart_queue", stope_id(u8)]`
 pub const ORECART_QUEUE_SEED: &[u8] = b"orecart_queue";
@@ -110,10 +123,26 @@ pub const MAX_RISK_TIER: u8 = 5;
 /// How a seam produces its yield.
 ///
 /// This split is the product. A protocol that reports one blended APY cannot
-/// tell a depositor whether the number survives next quarter, so the two are
+/// tell a depositor whether the number survives next quarter, so the kinds are
 /// never summed into a single field anywhere in this program: separate
 /// accumulators on the [`Stope`], separate accumulators on the [`Miner`], and
 /// a `yield_kind` on every `YieldAccrued` event.
+///
+/// # Why three and not two
+///
+/// The measurement in `docs/research/btc-on-solana.md` found a third source on
+/// Solana that looks sustainable and is not: a delta-neutral market-making
+/// vault paying 214.828 % whose yield is the losses of the traders on the
+/// other side. It does not end on a schedule, so it is not emissions; nobody
+/// is paying it as a fee for a service, so it is not sustainable. Filing it
+/// under either one is a false statement in the ledger, and the ledger of
+/// where yield comes from is the entire product. The off-chain half
+/// (`assay-engine`, the service API, the site) has carried three kinds from
+/// the start; this enum is what makes the chain agree with them.
+///
+/// Variants are appended, never reordered: the Borsh discriminant of
+/// `Sustainable` (0) and `Emissions` (1) is fixed by every account already
+/// written.
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum YieldKind {
     /// Paid out of fees or interest that a counterparty is actually paying:
@@ -127,6 +156,20 @@ pub enum YieldKind {
     ///
     /// Named `EmissionsYield` in the LODZ product vocabulary.
     Emissions,
+    /// Paid out of what somebody on the other side of a trade lost.
+    ///
+    /// It has no end date, so it cannot be disclosed the way an emission can,
+    /// and it does not survive on the same terms as a fee: it lasts exactly as
+    /// long as the losing flow does.
+    ///
+    /// How much of it a stope may hold is
+    /// [`RiskProfile::max_counterparty_bps`], which is zero for the two
+    /// profiles whose published stance is that they hold none. Recording the
+    /// kind and deciding whether to hold it are separate: this variant exists
+    /// so the ledger can state what happened even where the policy says not to
+    /// go, because a seam already held can start paying this way without
+    /// asking.
+    Counterparty,
 }
 
 /// What kind of claim a deposited token actually is.
@@ -187,6 +230,37 @@ impl RiskProfile {
             Self::Conservative => 2_000,
             Self::Balanced => 5_000,
             Self::Aggressive => 10_000,
+        }
+    }
+
+    /// Ceiling on how much of a stope's allocation may sit on seams whose
+    /// yield is [`YieldKind::Counterparty`].
+    ///
+    /// # Where these numbers come from
+    ///
+    /// They are the commitment the site already publishes. `CHAMBER_POLICY` in
+    /// `apps/web/app/_shared/measured.ts` carries an `admitsCounterparty` flag
+    /// per chamber -- false for conservative, false for balanced, true for
+    /// forward -- and the conservative stance reads "nothing funded by
+    /// somebody else's loss". A ceiling here that was looser than that would
+    /// make the published sentence unenforced, which is the exact failure this
+    /// program exists to close.
+    ///
+    /// The routing defaults in `packages/seam-router/src/constraints.ts`
+    /// disagreed with the site for balanced (1_000 bps against the site's
+    /// "false"). The published promise wins: a user-facing commitment does not
+    /// get widened by an internal default. That file's own comment already
+    /// says these are "defaults, not law" and that "the on-chain vault
+    /// parameters are the authority once the program is live" -- this function
+    /// is that authority, and it had nothing in it until now.
+    ///
+    /// Raising any of these needs a program upgrade. That friction is
+    /// deliberate for a promise this load-bearing.
+    pub fn max_counterparty_bps(&self) -> u16 {
+        match self {
+            Self::Conservative => 0,
+            Self::Balanced => 0,
+            Self::Aggressive => 3_000,
         }
     }
 
@@ -299,6 +373,14 @@ mod tests {
         assert!(c.max_risk_tier() < b.max_risk_tier());
         assert!(b.max_risk_tier() < a.max_risk_tier());
         assert!(a.max_risk_tier() <= MAX_RISK_TIER);
+
+        // Counterparty is the one axis that is not a gradient: the two
+        // profiles the site says admit none of it admit exactly none, and only
+        // the forward profile carries any. Monotonic, but flat at the bottom.
+        assert_eq!(c.max_counterparty_bps(), 0);
+        assert_eq!(b.max_counterparty_bps(), 0);
+        assert!(a.max_counterparty_bps() > 0);
+        assert!(a.max_counterparty_bps() <= crate::math::MAX_BPS);
     }
 
     /// The seeds a client derives are the seeds this program derives.

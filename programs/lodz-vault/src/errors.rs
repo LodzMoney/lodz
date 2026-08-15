@@ -132,4 +132,10 @@ pub enum LodzError {
     InsufficientBond,
     #[msg("The supplied treasury does not match the one recorded in the config.")]
     TreasuryMismatch,
+    // Appended rather than filed beside EmissionsAllocationExceeded: an Anchor
+    // error code is its position in this enum, and inserting in the middle
+    // renumbers every variant after it. Client code and this document's
+    // recorded control-group codes would silently start meaning other things.
+    #[msg("Counterparty allocation would exceed what this stope's risk profile permits.")]
+    CounterpartyAllocationExceeded,
 }

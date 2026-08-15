@@ -80,8 +80,14 @@ impl Seam {
     /// An emissions seam that does not say when its emission ends, or that
     /// says it already ended, is exactly the shape of disclosure this protocol
     /// refuses to accept. A sustainable seam carrying emission fields is
-    /// rejected too, so the two kinds cannot be blurred by leaving stale
-    /// values behind.
+    /// rejected too, so the kinds cannot be blurred by leaving stale values
+    /// behind.
+    ///
+    /// A counterparty seam is held to the sustainable rule rather than the
+    /// emissions one. Its yield has no schedule and therefore no honest end
+    /// date, so letting it carry `emission_ends_at` would publish a promise
+    /// about when it stops that nobody can keep. What bounds it instead is
+    /// `RiskProfile::max_risk_tier`, checked by `register_seam`.
     pub fn validate_emission_fields(
         kind: YieldKind,
         emission_ends_at: i64,
@@ -89,7 +95,7 @@ impl Seam {
         now: i64,
     ) -> Result<()> {
         match kind {
-            YieldKind::Sustainable => {
+            YieldKind::Sustainable | YieldKind::Counterparty => {
                 require!(
                     emission_ends_at == 0 && *emission_mint == Pubkey::default(),
                     LodzError::EmissionFieldsOnSustainableSeam
@@ -108,9 +114,13 @@ impl Seam {
     }
 
     /// Whether this seam may still book yield at `now`.
+    ///
+    /// Only an emissions seam has a closing date to enforce. A counterparty
+    /// seam stops paying when the losing flow stops, which is not a fact the
+    /// chain can know in advance -- so nothing here pretends to.
     pub fn accrual_window_open(&self, now: i64) -> bool {
         match self.yield_kind {
-            YieldKind::Sustainable => true,
+            YieldKind::Sustainable | YieldKind::Counterparty => true,
             YieldKind::Emissions => now < self.emission_ends_at,
         }
     }

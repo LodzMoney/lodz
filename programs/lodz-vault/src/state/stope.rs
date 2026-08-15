@@ -2,9 +2,11 @@
 //!
 //! Three stopes exist and no more: 0 conservative, 1 balanced, 2 aggressive.
 //! The profile is not a label. It is the ceiling on how much of the stope's
-//! allocation may sit on emissions-backed seams and on how high a seam's
-//! headlamp tier may be, and both ceilings are enforced by
-//! `register_seam` and `update_seam_allocation`.
+//! allocation may sit on emissions-backed seams, how much may sit on
+//! counterparty-funded seams, and how high a seam's headlamp tier may be. All
+//! three are enforced by `register_seam` and `update_seam_allocation`, so the
+//! difference between the profiles is a set of transactions the chain rejects
+//! rather than a description on a page.
 
 use anchor_lang::prelude::*;
 
@@ -12,15 +14,16 @@ use crate::errors::LodzError;
 use crate::math::index_delta;
 use crate::state::{RiskProfile, YieldKind};
 
-/// One risk-profiled vault: its shares, its principal, and two separate yield
-/// accumulators.
+/// One risk-profiled vault: its shares, its principal, and three separate
+/// yield accumulators.
 ///
 /// There is no combined `total_yield` field anywhere in this struct, and that
-/// is deliberate. Sustainable and emissions yield are accumulated, indexed and
-/// reported apart from each other all the way down to the individual miner,
-/// because a single blended number cannot answer the only question that
-/// matters about a BTC yield product: how much of this survives when the
-/// emission schedule ends.
+/// is deliberate. Sustainable, emissions and counterparty yield are
+/// accumulated, indexed and reported apart from each other all the way down to
+/// the individual miner, because a single blended number cannot answer the
+/// only questions that matter about a BTC yield product: how much of this
+/// survives when the emission schedule ends, and how much of it is somebody
+/// else's loss rather than a fee anyone is paying.
 #[account]
 pub struct Stope {
     pub stope_id: u8,
@@ -72,8 +75,32 @@ pub struct Stope {
     pub last_rebalance_at: i64,
     pub last_accrual_at: i64,
 
+    // -- appended 2026-08-16, into the reserved tail --------------------------
+    //
+    // These sit after every field that existed before them and take their
+    // bytes out of `reserved`, so `LEN` is unchanged and an account written by
+    // the previous deployment decodes with both of them zero -- which is the
+    // correct starting value. Reordering anything above this line would
+    // instead reinterpret live bytes.
+    /// Per-share accumulator for counterparty yield, scaled by
+    /// `YIELD_INDEX_SCALE`.
+    pub yield_index_counterparty: u128,
+    /// Lifetime realized counterparty yield, in internal accounting units.
+    pub realized_counterparty: u64,
+    /// The part of `allocated_bps` sitting on seams whose yield kind is
+    /// [`YieldKind::Counterparty`]. Capped by
+    /// `RiskProfile::max_counterparty_bps`.
+    ///
+    /// Unlike the two accumulators above, this one is a *running total over
+    /// existing seams*, so a stope that already held counterparty weight when
+    /// this field was introduced reads 0 here and under-counts. On a stope
+    /// whose ceiling is 0 that is harmless -- every further change is rejected
+    /// anyway -- but it is the reason a field like this cannot simply be
+    /// appended on a live deployment without reconciling it.
+    pub counterparty_bps: u16,
+
     pub _padding: [u8; 2],
-    pub reserved: [u8; 64],
+    pub reserved: [u8; 38],
 }
 
 impl Stope {
@@ -84,8 +111,11 @@ impl Stope {
         + 8 * 6                  // total_shares, total_deposits, pending_redemption,
                                  // total_redeemed, realized_sustainable, realized_emissions
         + 8 * 3                  // created_at, last_rebalance_at, last_accrual_at
+        + 16                     // yield_index_counterparty
+        + 8                      // realized_counterparty
+        + 2                      // counterparty_bps
         + 2                      // _padding
-        + 64; // reserved
+        + 38; // reserved (was 64; 26 bytes went to the three fields above)
 
     /// Record realized yield of one kind, moving both the lifetime total and
     /// the per-share index for that kind and nothing else.
@@ -113,6 +143,16 @@ impl Stope {
                     .ok_or(LodzError::MathOverflow)?;
                 self.yield_index_emissions = self
                     .yield_index_emissions
+                    .checked_add(delta)
+                    .ok_or(LodzError::MathOverflow)?;
+            }
+            YieldKind::Counterparty => {
+                self.realized_counterparty = self
+                    .realized_counterparty
+                    .checked_add(amount)
+                    .ok_or(LodzError::MathOverflow)?;
+                self.yield_index_counterparty = self
+                    .yield_index_counterparty
                     .checked_add(delta)
                     .ok_or(LodzError::MathOverflow)?;
             }
@@ -145,6 +185,10 @@ impl Stope {
             LodzError::AllocationExceeded
         );
 
+        // Each kind moves its own counter and no other. Folding counterparty
+        // weight into `emissions_bps` would report trader losses as scheduled
+        // yield, which is the confusion this program exists to prevent, so the
+        // two ceilings are tracked and checked separately.
         let emissions = if kind == YieldKind::Emissions {
             self.emissions_bps
                 .saturating_sub(previous_bps)
@@ -158,8 +202,22 @@ impl Stope {
             LodzError::EmissionsAllocationExceeded
         );
 
+        let counterparty = if kind == YieldKind::Counterparty {
+            self.counterparty_bps
+                .saturating_sub(previous_bps)
+                .checked_add(next_bps)
+                .ok_or(LodzError::MathOverflow)?
+        } else {
+            self.counterparty_bps
+        };
+        require!(
+            counterparty <= self.risk_profile.max_counterparty_bps(),
+            LodzError::CounterpartyAllocationExceeded
+        );
+
         self.allocated_bps = allocated;
         self.emissions_bps = emissions;
+        self.counterparty_bps = counterparty;
         Ok(())
     }
 }
@@ -236,6 +294,96 @@ mod tests {
         assert_eq!(s.allocated_bps, 1_000);
         s.reallocate(YieldKind::Emissions, 0, 4_000).unwrap();
         assert_eq!(s.emissions_bps, 5_000);
+    }
+
+    /// Three accumulators, three indices, and no crosstalk between any pair.
+    #[test]
+    fn the_three_kinds_never_touch_each_others_accumulators() {
+        let mut s = stope(RiskProfile::Aggressive);
+        s.total_shares = 100_000_000;
+
+        s.accrue(YieldKind::Sustainable, 1_000_000, 10).unwrap();
+        s.accrue(YieldKind::Emissions, 2_000_000, 20).unwrap();
+        s.accrue(YieldKind::Counterparty, 4_000_000, 30).unwrap();
+
+        assert_eq!(s.realized_sustainable, 1_000_000);
+        assert_eq!(s.realized_emissions, 2_000_000);
+        assert_eq!(s.realized_counterparty, 4_000_000);
+        assert_eq!(s.yield_index_sustainable, YIELD_INDEX_SCALE / 100);
+        assert_eq!(s.yield_index_emissions, YIELD_INDEX_SCALE / 50);
+        assert_eq!(s.yield_index_counterparty, YIELD_INDEX_SCALE / 25);
+
+        // A counterparty accrual moves neither of the other two, in either
+        // direction. Filing trader losses under "sustainable" is the specific
+        // lie this enum exists to make impossible.
+        let (sus, emi) = (s.yield_index_sustainable, s.yield_index_emissions);
+        s.accrue(YieldKind::Counterparty, 1_000_000, 40).unwrap();
+        assert_eq!(s.yield_index_sustainable, sus);
+        assert_eq!(s.yield_index_emissions, emi);
+        assert_eq!(s.realized_sustainable, 1_000_000);
+        assert_eq!(s.realized_emissions, 2_000_000);
+        assert_eq!(s.realized_counterparty, 5_000_000);
+    }
+
+    /// Counterparty weight is tracked apart from emissions weight.
+    ///
+    /// It must not consume the emissions ceiling, or a stope holding trader
+    /// losses would report itself as holding scheduled emissions.
+    #[test]
+    fn counterparty_allocation_does_not_consume_the_emissions_ceiling() {
+        let mut s = stope(RiskProfile::Aggressive);
+
+        s.reallocate(YieldKind::Counterparty, 0, 3_000).unwrap();
+        assert_eq!(s.allocated_bps, 3_000);
+        assert_eq!(s.counterparty_bps, 3_000);
+        assert_eq!(s.emissions_bps, 0, "counterparty is not emissions");
+
+        // The full emissions ceiling is still available.
+        s.reallocate(YieldKind::Emissions, 0, 6_000).unwrap();
+        assert_eq!(s.emissions_bps, 6_000);
+        assert_eq!(s.allocated_bps, 9_000);
+        assert_eq!(s.counterparty_bps, 3_000, "and untouched by the emissions change");
+    }
+
+    /// The two profiles that publish "no counterparty" reject it outright.
+    ///
+    /// apps/web CHAMBER_POLICY carries admitsCounterparty=false for both
+    /// conservative and balanced, and the conservative stance reads "nothing
+    /// funded by somebody else's loss". Before this ceiling existed the chain
+    /// accepted counterparty weight on either of them -- measured on devnet,
+    /// where a 2000 bps counterparty seam registered against the balanced
+    /// stope without complaint.
+    #[test]
+    fn profiles_that_publish_no_counterparty_reject_it_on_chain() {
+        for profile in [RiskProfile::Conservative, RiskProfile::Balanced] {
+            let mut s = stope(profile);
+            assert_eq!(profile.max_counterparty_bps(), 0);
+            assert!(
+                s.reallocate(YieldKind::Counterparty, 0, 1).is_err(),
+                "{profile:?} must refuse even one basis point"
+            );
+            assert_eq!(s.counterparty_bps, 0, "a rejected change must not apply");
+            assert_eq!(s.allocated_bps, 0);
+
+            // The other kinds are unaffected.
+            s.reallocate(YieldKind::Sustainable, 0, 5_000).unwrap();
+            assert_eq!(s.allocated_bps, 5_000);
+        }
+    }
+
+    #[test]
+    fn the_forward_profile_caps_counterparty_rather_than_banning_it() {
+        let mut s = stope(RiskProfile::Aggressive);
+        assert_eq!(RiskProfile::Aggressive.max_counterparty_bps(), 3_000);
+
+        s.reallocate(YieldKind::Counterparty, 0, 3_000).unwrap();
+        // One basis point over the published cap is refused.
+        assert!(s.reallocate(YieldKind::Counterparty, 0, 1).is_err());
+        assert_eq!(s.counterparty_bps, 3_000);
+
+        // Winding an existing counterparty seam down is always allowed.
+        s.reallocate(YieldKind::Counterparty, 3_000, 0).unwrap();
+        assert_eq!(s.counterparty_bps, 0);
     }
 
     #[test]
