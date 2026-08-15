@@ -178,7 +178,7 @@ pub fn accrue_yield(
 
     let stope = &mut ctx.accounts.stope;
     // Moves the lifetime total and the per-share index for this kind, and
-    // touches neither for the other kind.
+    // touches neither total nor index for the other two kinds.
     stope.accrue(yield_kind, normalized, now)?;
     // Yield becomes backing. `total_shares` is untouched, so every existing
     // share is worth more from this point.

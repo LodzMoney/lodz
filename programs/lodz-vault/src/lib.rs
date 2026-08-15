@@ -20,9 +20,9 @@
 //! It does not execute trades. `Seam::allocation_bps` is the on-chain record
 //! of how a stope's capital is *meant* to be routed; the execution against
 //! venues happens off-chain in `packages/seam-router`. What the chain enforces
-//! is the ceilings (100 % total, and a per-risk-profile ceiling on emissions
-//! exposure), the disclosure attached to each seam, and that only a bonded
-//! keeper can move a weight.
+//! is the ceilings (100 % total, and per-risk-profile ceilings on emissions
+//! exposure and on counterparty exposure), the disclosure attached to each
+//! seam, and that only a bonded keeper can move a weight.
 //!
 //! It does not price venue solvency. `accrue_yield` requires the reporting
 //! keeper to actually transfer the yield into custody, so the fact that the
@@ -32,11 +32,11 @@
 //!
 //! # The one thing this program exists to make structural
 //!
-//! Sustainable yield and emissions yield are never added together. Not on the
-//! [`state::Seam`] (a seam is one kind), not on the [`state::Stope`] (two
-//! accumulators, two indices), not on the [`state::Miner`] (two balances, and
-//! `accrued_yield()` is a view rather than a field), and not in the events an
-//! indexer reads. An emissions seam cannot be registered without declaring
+//! Sustainable, emissions and counterparty yield are never added together. Not
+//! on the [`state::Seam`] (a seam is one kind), not on the [`state::Stope`]
+//! (three accumulators, three indices), not on the [`state::Miner`] (three
+//! balances, and `accrued_yield()` is a view rather than a field), and not in
+//! the events an indexer reads. An emissions seam cannot be registered without declaring
 //! when its schedule ends, and it stops being able to book yield the moment
 //! the chain clock passes that date.
 //!
@@ -201,7 +201,8 @@ pub mod lodz_vault {
     }
 
     /// Move a seam's allocation. Requires an active bonded keeper, and
-    /// re-checks the stope's 100 % ceiling and its emissions ceiling.
+    /// re-checks the stope's 100 % ceiling and its emissions and counterparty
+    /// ceilings.
     pub fn update_seam_allocation(
         ctx: Context<UpdateSeamAllocation>,
         seam_id: u16,

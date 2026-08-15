@@ -235,7 +235,7 @@ mod tests {
     }
 
     #[test]
-    fn accrual_keeps_the_two_kinds_apart() {
+    fn accrual_keeps_the_kinds_apart() {
         let mut s = stope(RiskProfile::Balanced);
         s.total_shares = 100_000_000;
 

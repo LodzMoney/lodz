@@ -318,7 +318,9 @@ pub fn update_seam_allocation(
     let yield_kind = ctx.accounts.seam.yield_kind;
     let previous_bps = ctx.accounts.seam.allocation_bps;
 
-    // Enforces both the 100 % ceiling and the stope's emissions ceiling.
+    // Enforces the 100 % ceiling and the stope's emissions and counterparty
+    // ceilings.
+    
     ctx.accounts
         .stope
         .reallocate(yield_kind, previous_bps, new_allocation_bps)?;

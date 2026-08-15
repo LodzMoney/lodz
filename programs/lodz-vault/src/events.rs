@@ -8,7 +8,7 @@
 //! [`YieldAccrued`] carries `yield_kind` and the two post-accrual stope totals
 //! side by side. An indexer that only ever sees these events can therefore
 //! never produce a blended APY by accident: there is no field in this file
-//! that adds sustainable and emissions yield together.
+//! that adds the three yield kinds together.
 
 use anchor_lang::prelude::*;
 
@@ -58,6 +58,11 @@ pub struct StopeOpened {
     pub stope_id: u8,
     pub risk_profile: RiskProfile,
     pub max_emissions_bps: u16,
+    /// Added 2026-08-16, before any indexer exists. Without it the per-profile
+    /// counterparty ceiling is unreachable from the log stream alone, and the
+    /// rule for changing an event afterwards is to emit a new type rather than
+    /// edit this one -- so this is the last cheap moment to add it.
+    pub max_counterparty_bps: u16,
     pub max_risk_tier: u8,
     pub orecart_queue: Pubkey,
     pub timestamp: i64,

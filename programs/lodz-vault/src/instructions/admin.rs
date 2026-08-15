@@ -203,7 +203,8 @@ pub struct RegisterAditParams {
     /// What the depositor is exposed to. None of the variants is native
     /// bitcoin.
     pub custody_kind: CustodyKind,
-    /// Headlamp tier, 1..=5.
+    /// Layer severity, 1..=5. Not the `low`/`medium`/`high` band -- see
+    /// `Adit::risk_tier`.
     pub risk_tier: u8,
     /// `normalized = floor(amount * conversion_num / conversion_den)`.
     pub conversion_num: u64,
@@ -385,6 +386,7 @@ pub fn open_stope(ctx: Context<OpenStope>, stope_id: u8, risk_profile: RiskProfi
         stope_id,
         risk_profile,
         max_emissions_bps: risk_profile.max_emissions_bps(),
+        max_counterparty_bps: risk_profile.max_counterparty_bps(),
         max_risk_tier: risk_profile.max_risk_tier(),
         orecart_queue: queue.key(),
         timestamp: now,
