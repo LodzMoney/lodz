@@ -19,7 +19,7 @@ Confirmed identifiers used throughout:
 | Public organisation | `LodzMoney` |
 | Public repositories | `LodzMoney/lodz`, `LodzMoney/lodz-sdk` |
 | Private repositories | `Cryptottat/lodz-web`, `Cryptottat/lodz-api`, `Cryptottat/lodz-core` |
-| npm packages | `lodz-cli`, `lodz-sdk`, `lodz-assay-engine`, `lodz-headlamp-risk`, `lodz-seam-router`, `lodz-orecart-queue` |
+| npm packages | `@lodz/cli`, `@lodz/sdk`, `@lodz/assay-engine`, `@lodz/headlamp-risk`, `@lodz/seam-router`, `@lodz/orecart-queue` |
 
 ---
 
@@ -76,8 +76,8 @@ not the parent of the applications.
 
 ## 2. The web application does not depend on the packages
 
-`apps/web` has zero dependencies on any `lodz-*` package. Verified: its `package.json`
-lists no `lodz-*` entry and no `workspace:` protocol dependency.
+`apps/web` has zero dependencies on any `@lodz/*` package. Verified: its `package.json`
+lists no `@lodz/*` entry and no `workspace:` protocol dependency.
 
 This is a constraint imposed by the repository split rather than a preference. Vercel
 builds from `Cryptottat/lodz-web` alone. A `workspace:` dependency on
@@ -142,7 +142,7 @@ reimplementation.
                                         |
                 +-----------------------+-----------------------+
                 |                       |                       |
-          apps/web (proxy)          lodz-cli                lodz-sdk
+          apps/web (proxy)          @lodz/cli               @lodz/sdk
 ```
 
 **[1] Fetch and shape-check.** Only endpoints verified reachable without authentication
@@ -347,7 +347,7 @@ protocol state from logs rather than by polling every account.
 | `apps/web` | Vercel, project `lodz-web` | Deployed |
 | `apps/service` | Railway, project `lodz-api` | Deployed |
 | Anchor program | Solana mainnet | **Not deployed** |
-| `lodz-cli`, `lodz-sdk` | npm | Packaged |
+| `@lodz/cli`, `@lodz/sdk` | npm | Packaged |
 | Docs | `LodzMoney/lodz`, rendered at `/shaft` | Mirrored |
 
 ### 6.1 The program is built, not deployed
@@ -429,12 +429,12 @@ and full commands in `security.md` sections 1.3 and 10.
 | Directory | npm name | Role |
 |---|---|---|
 | `anchor-program/` | `lodz-anchor-program` | Rust program, IDL, localnet tests |
-| `assay-engine/` | `lodz-assay-engine` | Three-way yield decomposition |
-| `seam-router/` | `lodz-seam-router` | Allocation policy across seams |
-| `orecart-queue/` | `lodz-orecart-queue` | Redemption wait computation |
-| `headlamp-risk/` | `lodz-headlamp-risk` | Risk layering and exposure |
-| `sdk-ts/` | `lodz-sdk` | Client library |
-| `cli/` | `lodz-cli` | Command line interface |
+| `assay-engine/` | `@lodz/assay-engine` | Three-way yield decomposition |
+| `seam-router/` | `@lodz/seam-router` | Allocation policy across seams |
+| `orecart-queue/` | `@lodz/orecart-queue` | Redemption wait computation |
+| `headlamp-risk/` | `@lodz/headlamp-risk` | Risk layering and exposure |
+| `sdk-ts/` | `@lodz/sdk` | Client library |
+| `cli/` | `@lodz/cli` | Command line interface |
 
 The four domain packages mirror rules the service also implements. That duplication is
 intentional and bounded: the service is the runtime source of truth for anything served

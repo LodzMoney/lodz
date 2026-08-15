@@ -192,7 +192,7 @@ checked against `programs/lodz-vault/src/` without taking either on trust.
 ## Client
 
 ```
-npm i -g lodz-cli
+npm i -g @lodz/cli
 LODZ_API_URL=https://api.lodz.money lodz assay --btc 1.5
 ```
 
