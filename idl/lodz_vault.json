@@ -1985,7 +1985,8 @@
       "name": "update_seam_allocation",
       "docs": [
         "Move a seam's allocation. Requires an active bonded keeper, and",
-        "re-checks the stope's 100 % ceiling and its emissions ceiling."
+        "re-checks the stope's 100 % ceiling and its emissions and counterparty",
+        "ceilings."
       ],
       "discriminator": [
         251,
@@ -2809,7 +2810,12 @@
           {
             "name": "risk_tier",
             "docs": [
-              "Headlamp tier, 1 (lowest) to 5 (highest)."
+              "Layer severity, 1 (lowest) to 5 (highest).",
+              "",
+              "The same 1..5 scale `packages/headlamp-risk` uses per risk layer, not",
+              "the `low`/`medium`/`high` band that package reports -- those are a",
+              "presentation bucket over a composite of these. `docs/risk-spec.md` 2.4",
+              "carries the conversion and the reason it only runs one way."
             ],
             "type": "u8"
           },
@@ -3550,7 +3556,13 @@
           {
             "name": "normalized_amount",
             "docs": [
-              "Principal owed, in internal accounting units, before the fee."
+              "What the burned shares were worth at request time, in internal",
+              "accounting units, before the fee.",
+              "",
+              "This is principal *plus* the position's realized yield, because",
+              "`accrue_yield` raises the pool without minting shares. The principal",
+              "alone is `normalized_amount - fee_basis_normalized`, and that part is",
+              "what comes back one for one."
             ],
             "type": "u64"
           },
@@ -3922,7 +3934,8 @@
           {
             "name": "risk_tier",
             "docs": [
-              "Headlamp tier, 1..=5."
+              "Layer severity, 1..=5. Not the `low`/`medium`/`high` band -- see",
+              "`Adit::risk_tier`."
             ],
             "type": "u8"
           },
@@ -4059,9 +4072,9 @@
           {
             "name": "yield_kind",
             "docs": [
-              "Sustainable or emissions. Immutable after registration: changing it",
-              "would silently rewrite the meaning of `realized_yield` already booked",
-              "under the old kind."
+              "Sustainable, emissions or counterparty. Immutable after registration:",
+              "changing it would silently rewrite the meaning of `realized_yield`",
+              "already booked under the old kind."
             ],
             "type": {
               "defined": {
@@ -4072,8 +4085,13 @@
           {
             "name": "risk_tier",
             "docs": [
-              "Headlamp tier, 1 (lowest) to 5 (highest). Bounded by the owning",
-              "stope's `RiskProfile::max_risk_tier`."
+              "Layer severity, 1 (lowest) to 5 (highest). Bounded by the owning",
+              "stope's `RiskProfile::max_risk_tier`.",
+              "",
+              "See `Adit::risk_tier` for what the number is on, and",
+              "`docs/risk-spec.md` 2.5 for what it does not yet have: there is no",
+              "production custody ledger, so this value is asserted by whoever",
+              "registers the seam rather than measured."
             ],
             "type": "u8"
           },
@@ -4531,6 +4549,16 @@
           },
           {
             "name": "max_emissions_bps",
+            "type": "u16"
+          },
+          {
+            "name": "max_counterparty_bps",
+            "docs": [
+              "Added 2026-08-16, before any indexer exists. Without it the per-profile",
+              "counterparty ceiling is unreachable from the log stream alone, and the",
+              "rule for changing an event afterwards is to emit a new type rather than",
+              "edit this one -- so this is the last cheap moment to add it."
+            ],
             "type": "u16"
           },
           {
