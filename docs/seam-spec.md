@@ -219,13 +219,21 @@ Note that the three per-kind rates are summed into `blended_apy_bps` but the com
 remain individually addressable. A caller may present the blend, and may not present it
 without the breakdown being available in the same payload.
 
-Two fields carry a stated guarantee. `counterparty_apy_bps` is documented as zero for the
-conservative and balanced stopes, which admit no counterparty exposure at all, and as
-bounded by 3000 bps for the aggressive one. It used to be documented as zero everywhere,
-on the reasoning that the router never allocated there. That was a description of the
-router's current behaviour dressed as a property of the field, and it stopped being true
-the moment the ceiling became per-profile: a guarantee that rests on nobody having
-exercised a path is not a guarantee.
+Two fields carry a stated bound, and in the first case the bound is a fact about routing
+rather than about the program. `counterparty_apy_bps` is documented as zero under every
+stope, because the router allocates nothing to counterparty seams (`NEVER_ROUTE` in
+`services/sources/seam_definitions.py`). It was once documented as zero on the reasoning
+that the router happened never to allocate there and no rule said it could not -- a
+description of the router's current behaviour dressed as a property of the field.
+
+The program's ceiling is a separate figure and does not bound this field. It caps the
+share of a stope's **allocation** that may sit on counterparty seams, so 3000 bps of
+capital in a venue quoting 214.83 percent would put this **rate** field past 6400 bps.
+Two quantities, both denominated in basis points, measured against different
+denominators. A non-zero value here therefore means the routing policy changed, not that
+the program began permitting something new. `risk-spec.md` 7.6 sets out the distinction
+and why the ceiling must not be restated as the smaller of the two numbers.
+
 `emission_exposure_bps` is documented as always returned, **including when it is zero** --
 the field never disappears just because the answer is nothing, since an absent field and a
 measured zero read identically to a caller otherwise.
@@ -257,7 +265,7 @@ flips when they do not.
 
 The on-chain program carries all three variants, `Sustainable`, `Emissions` and
 `Counterparty`
-(`packages/anchor-program/programs/lodz-vault/src/state/mod.rs:154-180`). This was not
+(`packages/anchor-program/programs/lodz-vault/src/state/mod.rs:158-185`). This was not
 always true: the chain held two variants until 2026-08-16, so a counterparty seam could
 be classified by the catalogue and had nowhere to be recorded on chain. The ledger of
 where yield comes from is the product, and a ledger that has to file trader losses under

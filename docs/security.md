@@ -394,7 +394,7 @@ check that runs before the time gate (`redemption.rs:413-416`).
 ### 5.6 Authority scope
 
 The authority is a single key checked by constraint, and what it can do is bounded by
-compile-time ceilings rather than by trust (`state/mod.rs:87-98`):
+compile-time ceilings rather than by trust (`state/mod.rs:82-103`):
 
 ```rust
 pub const MAX_FEE_BPS: u16 = 500;                          // 5 percent

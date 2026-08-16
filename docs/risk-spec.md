@@ -20,7 +20,7 @@ claim issued by a third party against bitcoin held somewhere else. None of them 
 on the Bitcoin base chain, and the protocol never describes them as one.
 
 This is enforced in the type system rather than left to copy. The on-chain `CustodyKind`
-enum (`packages/anchor-program/programs/lodz-vault/src/state/mod.rs:182-199`) carries a
+enum (`packages/anchor-program/programs/lodz-vault/src/state/mod.rs:187-204`) carries a
 doc comment stating that no variant is a coin on the Bitcoin network, and its three
 variants each name what the depositor is exposed to instead:
 
@@ -43,7 +43,7 @@ LODZ uses two distinct risk scales. Conflating them is a spec error.
 
 ### 2.1 On-chain tier: `u8`, range 1 to 5
 
-Declared at `state/mod.rs:123-124`:
+Declared at `state/mod.rs:128-129`:
 
 ```rust
 pub const MIN_RISK_TIER: u8 = 1;
@@ -58,7 +58,7 @@ Both `Adit` (one accepted asset, `state/adit.rs:62-68`) and `Seam` (one venue-as
 triple, `state/seam.rs:29-36`) carry a `risk_tier: u8` in this range.
 
 The bound is enforced on registration, not assumed. `register_adit`
-(`instructions/admin.rs:260-261`) and `register_seam` (`instructions/admin.rs:476-477`)
+(`instructions/admin.rs:260-263`) and `register_seam` (`instructions/admin.rs:477-480`)
 both check:
 
 ```rust
@@ -83,8 +83,9 @@ number and a five-point scale would imply a precision the evidence does not supp
 
 ### 2.3 The binding rule between them
 
-A seam's numeric tier is not free. Each stope declares a `RiskProfile`, and the profile
-caps the tier of any seam routable from it (`state/mod.rs:276-282`):
+A seam's numeric tier is not free. Each stope declares a `RiskProfile`, and
+`RiskProfile::max_risk_tier()` (`state/mod.rs:283-289`) caps the tier of any seam routable
+from it:
 
 | Stope | `RiskProfile` | `max_risk_tier()` | `max_emissions_bps()` |
 |---|---|---|---|
@@ -92,7 +93,7 @@ caps the tier of any seam routable from it (`state/mod.rs:276-282`):
 | 1 | `Balanced` | 3 | 5000 |
 | 2 | `Aggressive` | 5 | 10000 |
 
-Enforced at `instructions/admin.rs:495-496`:
+Enforced at `instructions/admin.rs:496-499`:
 
 ```rust
 require!(
@@ -103,6 +104,13 @@ require!(
 
 The difference between the three stopes is therefore a constraint the chain rejects
 transactions over, not a label on a page.
+
+The two right-hand columns are on different scales and neither is a share of the other.
+`2 / 3 / 5` is the 1-to-5 severity grade of section 2.1; `2000 / 5000 / 10000` is a share
+of the stope's allocation in basis points. Both are ceilings, and a ceiling says what the
+program permits rather than what the router has placed. Section 7.6 states why the two
+have to be published as separate figures and why a ceiling written lower than the program
+enforces is a defect rather than a precaution.
 
 ### 2.4 Converting between the scales
 
@@ -528,7 +536,7 @@ stating that nothing about the unit makes a deposit bitcoin.
 
 ### 7.3 Authority ceilings a compromised key cannot raise
 
-Declared at `state/mod.rs:64-85` under a comment stating these are the parameters where
+Declared at `state/mod.rs:82-103` under a comment stating these are the parameters where
 the difference between bad and unrecoverable is decided:
 
 | Constant | Value | Effect |
@@ -560,7 +568,7 @@ has run out. The corresponding error is `EmissionEnded` (`errors.rs:81-82`).
 ### 7.5 Counterparty yield: recorded everywhere, routed in one chamber
 
 The on-chain `YieldKind` has three variants, `Sustainable`, `Emissions` and
-`Counterparty` (`state/mod.rs:154-180`), matching the service-side enum
+`Counterparty` (`state/mod.rs:158-185`), matching the service-side enum
 (`common.py:25`).
 
 This section previously recorded the opposite as a deliberate divergence: the chain held
@@ -577,7 +585,7 @@ The two questions are now answered separately:
 (`Stope::realized_counterparty`, `Stope::yield_index_counterparty`) and down to the
 individual position (`Miner::accrued_counterparty`). No kind is ever summed with another.
 
-**Routing.** `RiskProfile::max_counterparty_bps()` (`state/mod.rs:266-272`) caps how much
+**Routing.** `RiskProfile::max_counterparty_bps()` (`state/mod.rs:271-277`) caps how much
 of a stope's allocation may sit on counterparty seams:
 
 | Stope | `RiskProfile` | `max_counterparty_bps()` |
@@ -601,6 +609,62 @@ way round: a user-facing commitment does not get widened by an internal default.
 
 Raising any of these requires a program upgrade, which is the correct level of friction
 for a yield source whose payer is another trader.
+
+### 7.6 A ceiling is not an allocation
+
+Every figure in 2.3, 7.3 and 7.5 is a ceiling. A ceiling and an allocation are two
+different facts about the same stope, and stating either one alone leaves the reader with
+an incomplete picture that nothing in the answer marks as incomplete.
+
+| | What it is | What moves it |
+|---|---|---|
+| Ceiling | The boundary the program enforces. The chain rejects any transaction that would cross it | A program upgrade, and nothing else |
+| Allocation | How much the router has actually placed, somewhere at or below that boundary | A routing decision, on any day, with no upgrade |
+
+Worked example. `max_counterparty_bps()` is 0 for conservative, 0 for balanced and 3000
+for aggressive. The service allocates nothing to counterparty seams under any profile:
+`NEVER_ROUTE` in `apps/service/src/services/sources/seam_definitions.py` excludes the one
+counterparty seam in the catalogue, so the allocated counterparty share is zero
+everywhere, aggressive included. Aggressive is **sitting below a ceiling of 3000**, not
+operating under a ceiling of zero. Both sentences are true of the same stope and neither
+substitutes for the other. The `counterparty_apy_bps` description in
+`apps/service/src/models/seam.py` carries both for that reason, and says which of the two
+would have to change for the field to stop reading zero.
+
+**Writing a ceiling lower than the program enforces is not the cautious error.** The
+intuition that a stricter published number can only be safer is wrong, and it is wrong in
+the direction that is hardest to notice. A ceiling is the disclosure of a boundary, not an
+undertaking to stay at any particular point inside it. An integrator asking what share of
+an aggressive stope's capital may sit on emission-funded seams reads
+`max_emissions_bps()`; told 6000, they underestimate a stope the program permits to reach
+10000. The two directions fail differently:
+
+| Published ceiling | What happens |
+|---|---|
+| Above the program's | The chain rejects transactions the document says are allowed. Loud, and caught on the first attempt |
+| Below the program's | Permitted exposure goes unreported. Silent, and it is the reader who ends up wrong |
+
+The second is the one this specification guards against, because nothing surfaces it. It
+is 7.4 applied one level up: emissions exposure is disclosed rather than assumed away, and
+so is the room the protocol has to take more of it.
+
+**Risk appetite belongs in the allocation, not in the ceiling.** A stance more cautious
+than the chain requires is expressed by routing less, which is visible in the API and
+reversible without an upgrade. Expressing it by writing down a smaller ceiling misstates
+the boundary for everyone who reads the specification rather than the allocation, and
+misstates it in the direction of understating exposure.
+
+**The split is enforced mechanically.**
+`packages/anchor-program/scripts/internal/check_cap_facts.py` compares the ceiling figures
+across every layer that restates them -- the program, the router and assay packages, their
+published READMEs, the site, the public mirrors and this document -- and fails on any
+disagreement in either direction rather than only on ceilings that are too loose. It
+deliberately does not compare allocations: those are expected to differ between layers and
+from one day to the next, and treating a routing choice as a specification violation would
+push exactly the wrong correction. A layer that restates a ceiling and is not registered in
+that script's `LAYERS` list is invisible to the check by construction. That is how the
+`assay-engine` defaults survived the morning on which the other three layers were
+reconciled by hand.
 
 ---
 

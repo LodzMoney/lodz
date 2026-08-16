@@ -217,7 +217,7 @@ them.
 | A ticket cannot be claimed twice | Status check against `LodzError::TicketAlreadyClaimed`, `redemption.rs:413-416` |
 | Only the owner can move a position | `has_one = owner`, `redemption.rs:64, 341, 354` |
 | Only the authority can change parameters | `has_one = authority`, `admin.rs:161, 224, 328, 428, 562, 612` |
-| Parameters have ceilings a key cannot raise | `MAX_FEE_BPS = 500` and three delay ceilings, `state/mod.rs:87-98` |
+| Parameters have ceilings a key cannot raise | `MAX_FEE_BPS = 500` and three delay ceilings, `state/mod.rs:82-103` |
 | A keeper has capital at risk | Bond and slash paths, `instructions/keeper.rs`, `admin.rs:655` |
 | Arithmetic cannot wrap silently | `overflow-checks = true` plus checked forms |
 | An unregistered mint cannot be deposited | Adit PDA derived from the mint itself |
