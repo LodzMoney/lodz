@@ -297,7 +297,7 @@ Three rules exist to stop a technically accurate number from being a misleading 
 
 ## 5. Anchor program security
 
-Source: `packages/anchor-program/programs/lodz-vault/src/`. The program defines 53 distinct
+Source: `packages/anchor-program/programs/lodz-vault/src/`. The program defines 54 distinct
 error variants (`errors.rs`), which is the shape of a program that rejects specifically
 rather than generically.
 
@@ -307,9 +307,9 @@ Account ownership is asserted with Anchor's `has_one`, so the check is part of a
 resolution and cannot be forgotten inside a handler:
 
 ```rust
-has_one = owner @ LodzError::Unauthorized,        // redemption.rs:64, 292, 300
+has_one = owner @ LodzError::Unauthorized,        // redemption.rs:64, 341, 354
 has_one = authority @ LodzError::Unauthorized,    // admin.rs:161, 224, 328, 428, 562, 612
-has_one = asset_mint @ LodzError::AditMintMismatch, // deposit.rs:38, redemption.rs:92, 301, 318
+has_one = asset_mint @ LodzError::AditMintMismatch, // deposit.rs:38, redemption.rs:100, 355, 372
 ```
 
 Every admin-only instruction carries `has_one = authority`. Every redemption path carries
@@ -367,7 +367,7 @@ pub adit:         Box<Account<'info, Adit>>,          // deposit.rs:42
 pub stope:        Box<Account<'info, Stope>>,         // deposit.rs:49
 pub miner:        Box<Account<'info, Miner>>,         // deposit.rs:60
 pub orecart_queue: Box<Account<'info, OrecartQueue>>, // redemption.rs:74
-pub orecart:      Box<Account<'info, Orecart>>,       // redemption.rs:83
+pub orecart:      Box<Account<'info, Orecart>>,       // redemption.rs:91
 ```
 
 This is a correctness control, not a style choice. Frame exhaustion appears at runtime on
@@ -375,7 +375,7 @@ the instructions with the most accounts, which are the ones that move the most v
 
 ### 5.5 Time validation on redemption
 
-A queued ticket cannot be claimed before its delay elapses (`redemption.rs:365-368`):
+A queued ticket cannot be claimed before its delay elapses (`redemption.rs:419-422`):
 
 ```rust
 require!(
@@ -385,16 +385,16 @@ require!(
 ```
 
 `claimable_at` is stamped once at request time from the base delay plus a congestion term
-and is stored on the ticket (`redemption.rs:162, 241`), so it cannot be recomputed
+and is stored on the ticket (`redemption.rs:209, 284`), so it cannot be recomputed
 favourably later. The predicate is duplicated as `Orecart::is_claimable_at`
-(`state/orecart.rs:73-74`), which additionally requires the ticket still be in `Queued`
-status, and claim ordering is guarded separately by a `TicketAlreadyClaimed` check
-(`redemption.rs:360`).
+(`state/orecart.rs:85-87`), which additionally requires the ticket still be in `Queued`
+status, and claim ordering is guarded separately by a `LodzError::TicketAlreadyClaimed`
+check that runs before the time gate (`redemption.rs:413-416`).
 
 ### 5.6 Authority scope
 
 The authority is a single key checked by constraint, and what it can do is bounded by
-compile-time ceilings rather than by trust (`state/mod.rs:74-85`):
+compile-time ceilings rather than by trust (`state/mod.rs:87-98`):
 
 ```rust
 pub const MAX_FEE_BPS: u16 = 500;                          // 5 percent
@@ -421,7 +421,18 @@ be an admin key able to freeze user funds already promised.
 
 The program has not been audited by a third party. The controls above are what the source
 implements, verified by reading it; they are not an assurance that the program is free of
-defects. Localnet unit tests exist; there has been no mainnet or devnet deployment.
+defects.
+
+What has been executed: 33 host unit tests, and a full deposit -> yield accrual ->
+redemption cycle on **devnet**, run again after each of the four deployments made on
+2026-08-16 (program `F9XmBYVEyEwFyHAdMJs6uBvyRag3AFhQ6YMZvqm13SLW`, recorded in
+`devnet-cycle-verification.md`). That run is also the reason this section is not longer:
+the first deployment stranded a position behind a PDA seed collision that no amount of
+reading the source had caught, which is the argument for running it rather than the
+argument for trusting it.
+
+What has not: **no mainnet deployment**, and no review by anyone outside the project.
+Devnet costs nothing to be wrong on. Neither property transfers to mainnet.
 
 ---
 
@@ -436,8 +447,13 @@ until the operator has supplied four things explicitly:
 4. confirmation of the balance available
 
 `solana-keygen new`, `solana airdrop` and `anchor deploy` are not run on an agent's own
-initiative. What is permitted is `anchor build` and localnet unit tests, neither of which
-touches a live cluster or spends anything.
+initiative. Absent all four, what is permitted is `anchor build` and host unit tests,
+neither of which touches a live cluster or spends anything.
+
+This gate was satisfied for devnet on 2026-08-16 -- the operator named the cluster, the
+keypair and its public key, and confirmed the balance -- and the four devnet deployments
+in section 5.7 followed from that. It has not been satisfied for mainnet, so the gate is
+still closed there. Approval is per cluster; a devnet approval does not carry.
 
 The gate exists because the alternative was tried. Automated deployment steps have
 previously executed against live clusters without the operator intending it, and a
@@ -535,7 +551,9 @@ staleness on one side; it does not establish truth.
 **Rate limiting is per instance and in memory.** It does not survive a restart and does not
 coordinate across replicas.
 
-**The program is unaudited and undeployed.** No third-party review has been performed.
+**The program is unaudited, and deployed to devnet only.** No third-party review has been
+performed, and no mainnet deployment has been made. A devnet cycle that completes is
+evidence the code paths run, not evidence that they are safe to hold value.
 
 **Points programmes are not measured.** DefiLlama's reward field captures token emissions
 and does not capture unissued points. The measured zero-emissions finding is a statement

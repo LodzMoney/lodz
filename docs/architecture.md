@@ -212,12 +212,12 @@ them.
 
 | Property | Mechanism |
 |---|---|
-| A redemption cannot be paid early | `require!(now >= orecart.claimable_at)`, `instructions/redemption.rs:365-368` |
-| The delay is fixed at request time | `claimable_at` stamped once and stored, `redemption.rs:162, 241` |
-| A ticket cannot be claimed twice | Status check against `TicketAlreadyClaimed`, `redemption.rs:360` |
-| Only the owner can move a position | `has_one = owner`, `redemption.rs:64, 292, 300` |
+| A redemption cannot be paid early | `require!(now >= orecart.claimable_at)`, `instructions/redemption.rs:418-422` |
+| The delay is fixed at request time | `claimable_at` stamped once and stored, `redemption.rs:209, 284` |
+| A ticket cannot be claimed twice | Status check against `LodzError::TicketAlreadyClaimed`, `redemption.rs:413-416` |
+| Only the owner can move a position | `has_one = owner`, `redemption.rs:64, 341, 354` |
 | Only the authority can change parameters | `has_one = authority`, `admin.rs:161, 224, 328, 428, 562, 612` |
-| Parameters have ceilings a key cannot raise | `MAX_FEE_BPS = 500` and three delay ceilings, `state/mod.rs:74-85` |
+| Parameters have ceilings a key cannot raise | `MAX_FEE_BPS = 500` and three delay ceilings, `state/mod.rs:87-98` |
 | A keeper has capital at risk | Bond and slash paths, `instructions/keeper.rs`, `admin.rs:655` |
 | Arithmetic cannot wrap silently | `overflow-checks = true` plus checked forms |
 | An unregistered mint cannot be deposited | Adit PDA derived from the mint itself |
@@ -255,14 +255,15 @@ Declared program id, from `lib.rs:70`:
 F9XmBYVEyEwFyHAdMJs6uBvyRag3AFhQ6YMZvqm13SLW
 ```
 
-This is a build-time identity, not a deployment. See section 6.
+This is the id the program claims wherever it runs. It is live on devnet and not on
+mainnet. See section 6.
 
-IDL totals, read from the file: **17 instructions, 8 accounts, 16 events, 53 errors, 31
+IDL totals, read from the file: **17 instructions, 8 accounts, 16 events, 54 errors, 31
 types.**
 
 ### 5.1 Accounts and their PDA seeds
 
-Seed constants are declared once in `state/mod.rs:44-62` and referenced everywhere; no
+Seed constants are declared once in `state/mod.rs:44-75` and referenced everywhere; no
 call site builds a seed from a literal.
 
 | Account | Seeds | Cardinality |
@@ -272,7 +273,7 @@ call site builds a seed from a literal.
 | `Stope` | `["stope", stope_id_le]` | One per risk profile |
 | `Seam` | `["seam", seam_id_le]` | One per venue position |
 | `Miner` | `["miner", owner, stope_id_le]` | One per depositor per profile |
-| `Orecart` | `["orecart", owner, ticket_index_le]` | One per redemption ticket |
+| `Orecart` | `["orecart", owner, stope_id_le, ticket_index_le]` | One per redemption ticket |
 | `OrecartQueue` | `["orecart_queue", stope_id_le]` | One per profile |
 | `Keeper` | `["keeper", keeper_authority]` | One per keeper |
 
@@ -281,9 +282,18 @@ collateral and `["bond_vault"]` for keeper bonds. Both have `VaultConfig` as the
 authority.
 
 Every derivation is a constant plus a discriminating key or a little-endian id. Verified
-against the call sites: `MINER_SEED` at `redemption.rs:62, 290`, `ORECART_QUEUE_SEED` at
-`redemption.rs:70, 308`, `ORECART_SEED` at `redemption.rs:80, 298`, and the full
+against the call sites: `MINER_SEED` at `redemption.rs:62, 339`, `ORECART_QUEUE_SEED` at
+`redemption.rs:70, 362`, `ORECART_SEED` at `redemption.rs:84, 348`, and the full
 cross-instruction table in `security.md` section 5.3.
+
+`Orecart` carries `stope_id` in its seeds as well as `ticket_index`, because the counter
+the index is checked against, `Miner::ticket_count`, is itself per stope. Without it the
+two namespaces disagree: a depositor holding positions in two stopes has one counter per
+stope but a single ticket address space, so the second stope's counter -- still at zero --
+resolves to a ticket address the first stope already created. The account init fails as
+already in use, the counter only advances on success so it never advances, and that
+position can never be redeemed. This was measured on devnet against the first deployment,
+not reasoned about; the seed was widened in response.
 
 ### 5.2 Instructions
 
@@ -346,25 +356,42 @@ protocol state from logs rather than by polling every account.
 |---|---|---|
 | `apps/web` | Vercel, project `lodz-web` | Deployed |
 | `apps/service` | Railway, project `lodz-api` | Deployed |
+| Anchor program | Solana devnet | Deployed, one full cycle exercised |
 | Anchor program | Solana mainnet | **Not deployed** |
 | `@lodz/cli`, `@lodz/sdk` | npm | Packaged |
 | Docs | `LodzMoney/lodz`, rendered at `/shaft` | Mirrored |
 
-### 6.1 The program is built, not deployed
+### 6.1 The program is on devnet, not on mainnet
 
-`packages/anchor-program/target/deploy/lodz_vault.so` exists and a program keypair has been
-generated. Neither has been sent to any cluster -- not mainnet, not devnet, not testnet.
-The id in `lib.rs:70` is what the program will claim when deployed; it is currently a local
-declaration and nothing more.
+`packages/anchor-program/target/deploy/lodz_vault.so` has been deployed to devnet, and the
+id declared at `lib.rs:70` is the id it runs under there:
 
-This is deliberate and is described in `security.md` section 6: no transaction is submitted
-to any cluster until the operator supplies a keypair path, the resolved public key, the
-named cluster and a balance confirmation. `anchor build` and localnet tests are the
-permitted operations.
+```
+Program      F9XmBYVEyEwFyHAdMJs6uBvyRag3AFhQ6YMZvqm13SLW
+ProgramData  5YFbRm3fvhYEk7L9LycpW62ZtoPCFbyxqSd5aBTeWUnv
+Cluster      devnet
+```
 
-The consequence flows through the whole system. The API reports `vault_status:
-pre_deployment`, `btc_in_seams: 0.0` and `basis: target_allocation`, because zero BTC is
-the true amount currently routed. Every projection is a model of what the current
+It was deployed four times on 2026-08-16. The redeploys were not iteration for its own
+sake: the first run stranded a position behind the `Orecart` seed collision described in
+section 5.1, and later runs added the third yield kind and moved the redemption fee off
+the gross. Each deployment was followed by re-running the same deposit, accrual and
+redemption cycle on chain. The transaction signatures, decoded events and account
+snapshots are in `devnet-cycle-verification.md`.
+
+**Mainnet has had nothing sent to it.** No mainnet deployment has been made, approved or
+scheduled, and no third party has audited the program.
+
+The gate is described in `security.md` section 6: no transaction is submitted to any
+cluster until the operator supplies a keypair path, the resolved public key, the named
+cluster and a balance confirmation. Those four were supplied for devnet and only for
+devnet. Absent them for mainnet, `anchor build` and host unit tests remain the only
+permitted operations against it.
+
+The consequence flows through the whole system, and the devnet run does not change it. The
+API reports `vault_status: pre_deployment`, `btc_in_seams: 0.0` and `basis:
+target_allocation`, because zero BTC is the true amount currently routed -- the devnet
+cycle moved test assets on a test cluster. Every projection is a model of what the current
 catalogue would pay, not a report of realised performance, and the API says so in each
 response rather than in a footnote.
 
@@ -459,8 +486,11 @@ it for us too.
 pushed to `LodzMoney/lodz` by an explicit script. A change landing in a private repository
 is not visible publicly until that script runs.
 
-**The program is unaudited and undeployed.** No third-party review has been performed, and
-nothing in section 5 has been exercised on a live cluster.
+**The program is unaudited, and live only on devnet.** No third-party review has been
+performed. Section 5 has been exercised end to end on devnet -- deposit, yield accrual and
+redemption, across four deployments on one day -- and not at all on mainnet. A cycle that
+completes on a test cluster with test assets establishes that the code paths run; it is
+not an audit, and it is not evidence about behaviour at size or under an adversary.
 
 **Cross-source verification detects disagreement, not error.** If two sources are wrong in
 the same direction, the check passes. It establishes freshness, not truth.

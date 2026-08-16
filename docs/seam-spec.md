@@ -219,8 +219,13 @@ Note that the three per-kind rates are summed into `blended_apy_bps` but the com
 remain individually addressable. A caller may present the blend, and may not present it
 without the breakdown being available in the same payload.
 
-Two fields carry a stated guarantee. `counterparty_apy_bps` is documented as zero under
-every stope because the router does not allocate to counterparty seams.
+Two fields carry a stated guarantee. `counterparty_apy_bps` is documented as zero for the
+conservative and balanced stopes, which admit no counterparty exposure at all, and as
+bounded by 3000 bps for the aggressive one. It used to be documented as zero everywhere,
+on the reasoning that the router never allocated there. That was a description of the
+router's current behaviour dressed as a property of the field, and it stopped being true
+the moment the ceiling became per-profile: a guarantee that rests on nobody having
+exercised a path is not a guarantee.
 `emission_exposure_bps` is documented as always returned, **including when it is zero** --
 the field never disappears just because the answer is nothing, since an absent field and a
 measured zero read identically to a caller otherwise.
@@ -250,10 +255,20 @@ deception this API exists to stop. It resembles sustainable yield in that outsid
 arrives, and differs in that the payer must keep losing for it to continue, and the sign
 flips when they do not.
 
-The on-chain program carries only two variants, `Sustainable` and `Emissions`
-(`packages/anchor-program/programs/lodz-vault/src/state/mod.rs:117-130`). A counterparty
-seam is therefore classified and displayed by the catalogue but is **not routable by the
-deployed program**. See `risk-spec.md` section 7.5.
+The on-chain program carries all three variants, `Sustainable`, `Emissions` and
+`Counterparty`
+(`packages/anchor-program/programs/lodz-vault/src/state/mod.rs:154-180`). This was not
+always true: the chain held two variants until 2026-08-16, so a counterparty seam could
+be classified by the catalogue and had nowhere to be recorded on chain. The ledger of
+where yield comes from is the product, and a ledger that has to file trader losses under
+one of the other two kinds is stating something untrue.
+
+Recording a kind and routing capital into it are separate questions. The chain now does
+both, and answers them differently: it will record counterparty yield against any stope,
+and it will only let capital sit on a counterparty seam in the forward chamber.
+`RiskProfile::max_counterparty_bps()` is 0 for conservative, 0 for balanced and 3000 for
+aggressive, enforced on registration and on every reallocation
+(`state/mod.rs:266-272`). See `risk-spec.md` sections 2.4 and 7.5.
 
 ---
 

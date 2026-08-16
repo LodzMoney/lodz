@@ -20,7 +20,7 @@ claim issued by a third party against bitcoin held somewhere else. None of them 
 on the Bitcoin base chain, and the protocol never describes them as one.
 
 This is enforced in the type system rather than left to copy. The on-chain `CustodyKind`
-enum (`packages/anchor-program/programs/lodz-vault/src/state/mod.rs:138-149`) carries a
+enum (`packages/anchor-program/programs/lodz-vault/src/state/mod.rs:182-199`) carries a
 doc comment stating that no variant is a coin on the Bitcoin network, and its three
 variants each name what the depositor is exposed to instead:
 
@@ -43,7 +43,7 @@ LODZ uses two distinct risk scales. Conflating them is a spec error.
 
 ### 2.1 On-chain tier: `u8`, range 1 to 5
 
-Declared at `state/mod.rs:103-104`:
+Declared at `state/mod.rs:123-124`:
 
 ```rust
 pub const MIN_RISK_TIER: u8 = 1;
@@ -54,8 +54,8 @@ The accompanying comment states the reason there is no tier 0: every representat
 bitcoin on Solana carries bridge or custody risk, and a zero would read as "none". The
 scale therefore starts at 1 by construction, not by convention.
 
-Both `Adit` (one accepted asset, `state/adit.rs:62-63`) and `Seam` (one venue-asset-kind
-triple, `state/seam.rs:29-31`) carry a `risk_tier: u8` in this range.
+Both `Adit` (one accepted asset, `state/adit.rs:62-68`) and `Seam` (one venue-asset-kind
+triple, `state/seam.rs:29-36`) carry a `risk_tier: u8` in this range.
 
 The bound is enforced on registration, not assumed. `register_adit`
 (`instructions/admin.rs:260-261`) and `register_seam` (`instructions/admin.rs:476-477`)
@@ -84,7 +84,7 @@ number and a five-point scale would imply a precision the evidence does not supp
 ### 2.3 The binding rule between them
 
 A seam's numeric tier is not free. Each stope declares a `RiskProfile`, and the profile
-caps the tier of any seam routable from it (`state/mod.rs:195-201`):
+caps the tier of any seam routable from it (`state/mod.rs:276-282`):
 
 | Stope | `RiskProfile` | `max_risk_tier()` | `max_emissions_bps()` |
 |---|---|---|---|
@@ -102,8 +102,127 @@ require!(
 ```
 
 The difference between the three stopes is therefore a constraint the chain rejects
-transactions over, not a label on a page. The source comment at `state/mod.rs:181-184`
-states exactly this.
+transactions over, not a label on a page.
+
+### 2.4 Converting between the scales
+
+Section 2 says these are two scales and that conflating them is a spec error. That
+remains true, and it is not the same as saying no relation exists. One direction is
+determined; the other is not. Writing both down is what keeps the first from being
+guessed at and the second from being attempted.
+
+**Numeric tier to band -- determined.** Read a numeric tier as the severity every layer
+would carry if they all carried the same one, and put it through the composite in
+`packages/headlamp-risk/src/assess.ts:272-286`. With `WORST_LAYER_WEIGHT_PCT = 60` and
+`MEAN_LAYER_WEIGHT_PCT = 40` summing to 100, the composite reduces to
+`0.6 * worst + 0.4 * mean` in centi-severity, so a uniform vector scores exactly
+`tier * 100`. Against the thresholds at `assess.ts:35-39` (`score <= maxScore`):
+
+| On-chain tier | Uniform vector | Composite | Off-chain band |
+|---|---|---|---|
+| 1 | `[1,1,1,1,1]` | 100 | `low` |
+| 2 | `[2,2,2,2,2]` | 200 | `low` (inclusive boundary) |
+| 3 | `[3,3,3,3,3]` | 300 | `medium` |
+| 4 | `[4,4,4,4,4]` | 400 | `high` |
+| 5 | `[5,5,5,5,5]` | 500 | `high` |
+
+So `{1,2} -> low`, `{3} -> medium`, `{4,5} -> high`.
+
+This split is not a choice made here. It is the only one consistent with
+`max_risk_tier()` above: for a monotonic split `low={1..a}`, `medium={a+1..b}`,
+`high={b+1..5}`, requiring conservative to admit only `low`, balanced up to `medium`,
+and aggressive up to `high` forces `(a,b) = (2,3)`. Two files in two languages, written
+against different concerns, land on the same partition.
+
+**Band to numeric tier -- not determined, and must not be attempted.** `low` admits
+both 1 and 2, `high` admits both 4 and 5, and the composite is many-to-one besides: a
+worst layer of 4 reaches scores from 304 to 400, which spans `medium` and `high`. Of the
+3125 possible severity vectors, 89.8 percent land in `high`, so a measured `high` says
+almost nothing about which integer produced it. Code that needs a numeric tier must take
+it from the layer severities, never by widening a band.
+
+### 2.5 What the numeric tier does not yet have
+
+The mapping above is arithmetic. It does not supply the numbers themselves, and at the
+time of writing **nothing does**:
+
+- `createCustodyLedger` / `setCustodyLedger` have no caller outside
+  `packages/headlamp-risk`. Neither `apps/web` nor `apps/service` depends on that
+  package. The custody records for the four assets exist only in
+  `packages/headlamp-risk/test/trust-model.test.ts`.
+- Three inputs that move severity -- `redeemability` (liquidity layer),
+  `reserveEvidence` (custody layer, +1) and `audits` (protocol layer, +1) -- are not
+  fields in the measured asset record at
+  `docs/research/btc-on-solana.md:1015-1088`. They are not measured anywhere.
+- `UNEVIDENCED_SEVERITY = 3` (`packages/headlamp-risk/src/types.ts:39`) floors any
+  unevidenced layer at 3. The `oracle` layer is unevidenced for all four assets, so
+  `worst >= 3` and the minimum reachable composite is 236. **No asset in scope can
+  currently reach the `low` band at all**, and therefore no asset can honestly carry an
+  on-chain tier of 1 or 2.
+- `apps/service/src/services/headlamp_risk.py` hardcodes a per-asset band. Until
+  2026-08-16 its comment claimed the values were "derived from the measured properties"
+  and named the deriving rule, while the values were the reverse of that rule on both
+  assets the rule speaks to: cbBTC, whose reserves cannot be reconciled at all, was
+  `low`, and zBTC, the only asset with a program mint authority and a live feed, was
+  `high`. It was ranking adoption. The values now follow section 2.6 and the comment
+  states plainly that the table is hand written, because it still is -- there is nothing
+  to derive from at runtime.
+
+Until a production custody ledger exists, a numeric tier written on chain is a number
+somebody typed. Section 4 records what the engine actually measures today.
+
+### 2.6 Turning the measurement into `reserveEvidence`
+
+The gap in 2.5 is not that the assets are unmeasured. `docs/research/btc-on-solana.md`
+measured them in detail. The gap is that the measurement was never carried into the field
+the model reads, so `UNEVIDENCED_SEVERITY = 3` lands on all four. **That floor is the
+model saying nothing, not the model saying "risky", and reading it as a verdict is the
+same mistake as reading an unrun check as a pass.**
+
+Carrying it across is a judgment, not a lookup, so the rule is written here first and the
+code follows it.
+
+**The question the field answers.** `ReserveEvidence` is documented as "what can be
+checked about the reserves said to back the representation"
+(`packages/headlamp-risk/src/custody.ts:22-28`). It asks what a third party can test, not
+what the issuer states. The rule follows from taking that literally:
+
+| Value | Rule |
+|---|---|
+| `onchain-verifiable` | Reserve addresses are published **and** an independent party has reproduced the balance check |
+| `proof-of-reserves` | A live feed exists **and** the addresses behind it are published, so the check is reproducible even if nobody has run it |
+| `audited-attestation` | A named auditor attests, but the underlying addresses are not published |
+| `none` | Nothing about the reserves can be checked by a third party. **This includes a feed that publishes a number whose inputs are self-declared and unpublished** |
+
+That last clause is the decision. A Chainlink PoR feed is not an on-chain verification: it
+sums balances at addresses the issuer declares
+(`docs/research/btc-on-solana.md:907-909`). Where those addresses are published the feed
+is reproducible and counts. Where they are not, the feed proves that the issuer publishes
+a number, which is a different claim, and treating it as reserve evidence would let the
+weakest asset borrow the credibility of the strongest.
+
+**Applied to the four assets in scope:**
+
+| Asset | Evidence in the research | Value | Citation |
+|---|---|---|---|
+| xBTC | Reserve BTC addresses published; balances reproduced against mempool.space and blockstream.info; 921.94 held against 921.86 issued, 100.0092 percent | `onchain-verifiable` | `btc-on-solana.md:803-808` |
+| WBTC (Portal) | The Wormhole leg is checkable on chain: 2,714.55 locked against 2,631.91 minted. The BitGo leg is not | `proof-of-reserves` | `btc-on-solana.md:16, 899-905` |
+| zBTC | Arbitrum Chainlink feed live at 59.72 BTC, PoR type A | `proof-of-reserves` | `btc-on-solana.md:1000` |
+| cbBTC | A feed exists, but no reserve addresses are published and the research records that reconciliation is "not even attemptable" | `none` | `btc-on-solana.md:16, 998` |
+
+**This inverts the intuition that size implies safety.** The largest asset by TVL is the
+one whose reserves cannot be checked at all, and the one that reconciles exactly is fourth
+by adoption. The research states it plainly: "scale and verifiability are exactly
+opposed" (`btc-on-solana.md:16`).
+
+**What it does not change.** Custody severity is
+`base + unproven + freezable + keypairAuthority`, clamped to 5
+(`custody.ts:487-494`). cbBTC and xBTC both hold a keypair mint authority and a keypair
+freeze authority (`btc-on-solana.md:150-152`), so both clamp to 5 on the custody layer
+whatever their reserve evidence. Filling this field honestly moves zBTC and WBTC and
+leaves the two custodial assets where they were. **It sharpens the model rather than
+flattering any asset**, which is the point of doing it before deciding whether the stope
+ceilings are wrong.
 
 ---
 
@@ -152,7 +271,7 @@ Tier: medium. LODZ never holds the underlying and cannot recover it for a holder
 
 | Factor | Tier | Observable indicator |
 |---|---|---|
-| `por-coverage` | high | `por_type` per asset. The two largest, cbBTC and WBTC, are type E |
+| `por-coverage` | high | `reserve_evidence` per asset. cbBTC, the largest, is `none`: a feed exists and no addresses back it |
 | `issuer-survival` | medium | soBTC trades 99.96 percent below bitcoin with 16,149 units still on chain |
 | `cross-chain-supply` | medium | zBTC also exists on other chains through CCIP |
 
@@ -404,7 +523,7 @@ through the classic token program impossible.
 `conversion_num` and `conversion_den` (`state/adit.rs:33-43`) fold together the decimal
 difference against the internal 8-decimal unit and the asset's declared ratio to one
 bitcoin. A representation that is not 1:1 is expressed here rather than quietly counted as
-if it were. `INTERNAL_DECIMALS = 8` carries an explicit comment (`state/mod.rs:90-95`)
+if it were. `INTERNAL_DECIMALS = 8` carries an explicit comment (`state/mod.rs:108-113`)
 stating that nothing about the unit makes a deposit bitcoin.
 
 ### 7.3 Authority ceilings a compromised key cannot raise
@@ -430,7 +549,7 @@ does not declare when its emission ends, or declares an end already in the past,
 to name the mint the emission is paid in. It also rejects a sustainable seam carrying
 emission fields, so the two kinds cannot be blurred by stale values.
 
-`Seam::accrual_window_open` (`state/seam.rs:111-116`) closes the window once the chain
+`Seam::accrual_window_open` (`state/seam.rs:126-131`) closes the window once the chain
 clock passes `emission_ends_at`, so a seam cannot keep booking yield from a schedule that
 has run out. The corresponding error is `EmissionEnded` (`errors.rs:81-82`).
 
@@ -438,19 +557,50 @@ has run out. The corresponding error is `EmissionEnded` (`errors.rs:81-82`).
 (`state/seam.rs:26-28`): changing it would silently rewrite the meaning of
 `realized_yield` already booked under the old kind.
 
-### 7.5 The two-kind on-chain enum against the three-kind catalogue
+### 7.5 Counterparty yield: recorded everywhere, routed in one chamber
 
-The on-chain `YieldKind` has two variants, `Sustainable` and `Emissions`
-(`state/mod.rs:117-130`). The service-side `YieldKind` has three, adding `counterparty`
+The on-chain `YieldKind` has three variants, `Sustainable`, `Emissions` and
+`Counterparty` (`state/mod.rs:154-180`), matching the service-side enum
 (`common.py:25`).
 
-This divergence is intentional and is recorded here so it is not read as a defect. The
-third kind exists because the highest advertised BTC yield on Solana is a perpetuals vault
-paying out of trader losses. Such a venue is classified and displayed by the catalogue but
-is not routable by the deployed program, which can only register a seam of one of its two
-variants. Any future support for counterparty seams on chain requires an enum change and
-therefore a program upgrade, which is the correct level of friction for adding a yield
-source whose payer is another trader.
+This section previously recorded the opposite as a deliberate divergence: the chain held
+two variants, and a counterparty seam was described as classified by the catalogue but
+not routable. That framing was wrong in a way worth keeping on the record. A missing
+variant does not stop a seam already held from starting to pay out of trader losses; it
+only stops the chain from *saying so*, which forces the yield into one of the other two
+accumulators. The ledger of where yield comes from is the product, so a ledger that has
+to misfile is worse than one that records something the policy declines to hold.
+
+The two questions are now answered separately:
+
+**Recording.** Any stope can accrue counterparty yield into its own accumulators
+(`Stope::realized_counterparty`, `Stope::yield_index_counterparty`) and down to the
+individual position (`Miner::accrued_counterparty`). No kind is ever summed with another.
+
+**Routing.** `RiskProfile::max_counterparty_bps()` (`state/mod.rs:266-272`) caps how much
+of a stope's allocation may sit on counterparty seams:
+
+| Stope | `RiskProfile` | `max_counterparty_bps()` |
+|---|---|---|
+| 0 | `Conservative` | 0 |
+| 1 | `Balanced` | 0 |
+| 2 | `Aggressive` | 3000 |
+
+Enforced by `Stope::reallocate` on registration and on every reallocation, rejecting with
+`LodzError::CounterpartyAllocationExceeded`. Winding an existing allocation down is
+always permitted.
+
+These figures are the commitment the site already publishes: `CHAMBER_POLICY` in
+`apps/web/app/_shared/measured.ts` carries `admitsCounterparty: false` for the
+conservative and balanced chambers, and the conservative stance reads "nothing funded by
+somebody else's loss". Before this ceiling existed, neither was enforced anywhere -- a
+2000 bps counterparty seam registered against the balanced stope on devnet without
+complaint. The routing defaults in `packages/seam-router/src/constraints.ts` had allowed
+1000 bps there, and were brought down to match the published stance rather than the other
+way round: a user-facing commitment does not get widened by an internal default.
+
+Raising any of these requires a program upgrade, which is the correct level of friction
+for a yield source whose payer is another trader.
 
 ---
 
