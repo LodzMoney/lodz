@@ -276,7 +276,15 @@ both, and answers them differently: it will record counterparty yield against an
 and it will only let capital sit on a counterparty seam in the forward chamber.
 `RiskProfile::max_counterparty_bps()` is 0 for conservative, 0 for balanced and 3000 for
 aggressive, enforced on registration and on every reallocation
-(`state/mod.rs:266-272`). See `risk-spec.md` sections 2.4 and 7.5.
+(`state/mod.rs:271-277`). See `risk-spec.md` sections 2.4 and 7.5.
+
+Emissions are capped the same way and the figures are not the same, so stating one
+ceiling here and not the other would read as though only counterparty exposure has a
+boundary. `RiskProfile::max_emissions_bps()` is 2000 for conservative, 5000 for balanced
+and 10000 for aggressive (`state/mod.rs:240-246`), enforced at the same two points.
+Read the aggressive figure as written: 10000 bps is the whole allocation, so that chamber
+may sit entirely on yield that has an end date, which is why every projection reports the
+emissions share separately rather than blending it into one rate.
 
 ---
 
