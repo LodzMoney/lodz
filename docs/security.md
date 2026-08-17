@@ -431,8 +431,10 @@ the first deployment stranded a position behind a PDA seed collision that no amo
 reading the source had caught, which is the argument for running it rather than the
 argument for trusting it.
 
-What has not: **no mainnet deployment**, and no review by anyone outside the project.
-Devnet costs nothing to be wrong on. Neither property transfers to mainnet.
+What has not: **that cycle on mainnet**, and no review by anyone outside the project. The
+program is deployed to mainnet with deposits closed, and one transaction has ever been
+submitted to it -- the deployment itself. Devnet costs nothing to be wrong on. Neither
+property transfers to mainnet.
 
 ---
 
@@ -452,8 +454,15 @@ neither of which touches a live cluster or spends anything.
 
 This gate was satisfied for devnet on 2026-08-16 -- the operator named the cluster, the
 keypair and its public key, and confirmed the balance -- and the four devnet deployments
-in section 5.7 followed from that. It has not been satisfied for mainnet, so the gate is
-still closed there. Approval is per cluster; a devnet approval does not carry.
+in section 5.7 followed from that. It was satisfied for mainnet on 2026-08-17, for one
+deployment and nothing beyond it.
+
+Approval is per cluster and per act. A devnet approval does not carry to mainnet, and the
+mainnet approval covered a deployment rather than a standing permission: an upgrade, an
+initialisation or any instruction call needs its own four. That the gate has held is
+checkable rather than asserted -- `getSignaturesForAddress` returns exactly one signature
+for the mainnet program and one for its ProgramData account, and both are the deploy at
+slot 439811367.
 
 The gate exists because the alternative was tried. Automated deployment steps have
 previously executed against live clusters without the operator intending it, and a
@@ -551,9 +560,10 @@ staleness on one side; it does not establish truth.
 **Rate limiting is per instance and in memory.** It does not survive a restart and does not
 coordinate across replicas.
 
-**The program is unaudited, and deployed to devnet only.** No third-party review has been
-performed, and no mainnet deployment has been made. A devnet cycle that completes is
-evidence the code paths run, not evidence that they are safe to hold value.
+**The program is unaudited, and deployed is not open.** No third-party review has been
+performed. It is on mainnet with deposits closed, and the full cycle has been run on
+devnet only. A devnet cycle that completes is evidence the code paths run, not evidence
+that they are safe to hold value.
 
 **Points programmes are not measured.** DefiLlama's reward field captures token emissions
 and does not capture unissued points. The measured zero-emissions finding is a statement

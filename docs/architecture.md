@@ -255,8 +255,8 @@ Declared program id, from `lib.rs:70`:
 F9XmBYVEyEwFyHAdMJs6uBvyRag3AFhQ6YMZvqm13SLW
 ```
 
-This is the id the program claims wherever it runs. It is live on devnet and not on
-mainnet. See section 6.
+This is the id the program claims wherever it runs. It is live on mainnet, and live on
+devnet under the same id. See section 6.
 
 IDL totals, read from the file: **17 instructions, 8 accounts, 16 events, 54 errors, 31
 types.**
@@ -356,44 +356,65 @@ protocol state from logs rather than by polling every account.
 |---|---|---|
 | `apps/web` | Vercel, project `lodz-web` | Deployed |
 | `apps/service` | Railway, project `lodz-api` | Deployed |
-| Anchor program | Solana devnet | Deployed, one full cycle exercised |
-| Anchor program | Solana mainnet | **Not deployed** |
+| Anchor program | Solana mainnet | Deployed 2026-08-17. Deposits closed, no cycle run there |
+| Anchor program | Solana devnet | Deployed, one full cycle exercised. Still live |
 | `@lodz/cli`, `@lodz/sdk` | npm | Packaged |
 | Docs | `LodzMoney/lodz`, rendered at `/shaft` | Mirrored |
 
-### 6.1 The program is on devnet, not on mainnet
+### 6.1 The program is on mainnet, and on devnet under the same id
 
-`packages/anchor-program/target/deploy/lodz_vault.so` has been deployed to devnet, and the
-id declared at `lib.rs:70` is the id it runs under there:
+`packages/anchor-program/target/deploy/lodz_vault.so` is deployed to Solana mainnet, and
+the id declared at `lib.rs:70` is the id it runs under there:
 
 ```
 Program      F9XmBYVEyEwFyHAdMJs6uBvyRag3AFhQ6YMZvqm13SLW
 ProgramData  5YFbRm3fvhYEk7L9LycpW62ZtoPCFbyxqSd5aBTeWUnv
-Cluster      devnet
+Cluster      mainnet-beta
+Owner        BPFLoaderUpgradeable -- upgradeable
+Authority    4qbbSkZTTm1DKL5h6tbSiGzfkzf8X6viWSBeFUzHHTKp
+Data length  655,360 bytes, about 20 percent unused
+Deployed     2026-08-17 17:03 KST, slot 439811367
+Signature    2SEFAvvvbZW1SgXjSjxbnHimqecBYDf4yYFcQ8iruruytFWcVcxwt762Vnmt9PBMEBt5A98HSzH6tAvF42UJ4yqV
 ```
 
-It was deployed four times on 2026-08-16. The redeploys were not iteration for its own
+The ProgramData address is derived from the program id by the upgradeable loader, so it is
+the same string on every cluster the id is deployed to. It identifies the program, not the
+cluster, and it is not evidence of which one a reader is looking at.
+
+The same id is live on devnet as well, and deploying to mainnet did not remove it. It was
+deployed there four times on 2026-08-16. The redeploys were not iteration for its own
 sake: the first run stranded a position behind the `Orecart` seed collision described in
 section 5.1, and later runs added the third yield kind and moved the redemption fee off
 the gross. Each deployment was followed by re-running the same deposit, accrual and
 redemption cycle on chain. The transaction signatures, decoded events and account
 snapshots are in `devnet-cycle-verification.md`.
 
-**Mainnet has had nothing sent to it.** No mainnet deployment has been made, approved or
-scheduled, and no third party has audited the program.
+**Deployed is not open.** Deposits are not open on the mainnet program, the deposit,
+accrual and redemption cycle in section 5 has been run on devnet and not on mainnet, and
+no third party has audited the program. This is checkable rather than asserted:
+`getSignaturesForAddress` returns exactly one signature for the mainnet program and one
+for its ProgramData account, and both are the deploy at slot 439811367. Nothing has been
+upgraded and no instruction has been invoked.
+
+What runs on the two clusters is the same program. The ProgramData accounts differ in size
+-- 655,360 bytes reserved on mainnet against 551,872 on devnet -- but the bytecode inside
+them is byte-identical: 545,665 bytes with the same SHA-256 on both. The extra space is
+headroom for a later upgrade, not a second build. Read the accounts and compare them; the
+loader publishes enough to check this without our help.
 
 The gate is described in `security.md` section 6: no transaction is submitted to any
 cluster until the operator supplies a keypair path, the resolved public key, the named
-cluster and a balance confirmation. Those four were supplied for devnet and only for
-devnet. Absent them for mainnet, `anchor build` and host unit tests remain the only
-permitted operations against it.
+cluster and a balance confirmation. Those four were supplied for devnet on 2026-08-16 and
+for mainnet on 2026-08-17. Approval is per cluster and does not carry; for any cluster
+where it has not been given, `anchor build` and host unit tests remain the only permitted
+operations.
 
-The consequence flows through the whole system, and the devnet run does not change it. The
-API reports `vault_status: pre_deployment`, `btc_in_seams: 0.0` and `basis:
+The consequence flows through the whole system, and neither deployment changes it. The API
+reports `vault_status: pre_deployment`, `btc_in_seams: 0.0` and `basis:
 target_allocation`, because zero BTC is the true amount currently routed -- the devnet
-cycle moved test assets on a test cluster. Every projection is a model of what the current
-catalogue would pay, not a report of realised performance, and the API says so in each
-response rather than in a footnote.
+cycle moved test assets on a test cluster, and the mainnet program has taken no deposit.
+Every projection is a model of what the current catalogue would pay, not a report of
+realised performance, and the API says so in each response rather than in a footnote.
 
 ### 6.2 Deployment mechanism
 
@@ -486,7 +507,7 @@ it for us too.
 pushed to `LodzMoney/lodz` by an explicit script. A change landing in a private repository
 is not visible publicly until that script runs.
 
-**The program is unaudited, and live only on devnet.** No third-party review has been
+**The program is unaudited, and deployed is not open.** No third-party review has been
 performed. Section 5 has been exercised end to end on devnet -- deposit, yield accrual and
 redemption, across four deployments on one day -- and not at all on mainnet. A cycle that
 completes on a test cluster with test assets establishes that the code paths run; it is

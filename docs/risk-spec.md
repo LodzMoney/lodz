@@ -361,17 +361,19 @@ Tier: medium. The router, the keeper and the redemption queue are LODZ code.
 
 | Factor | Tier | Observable indicator |
 |---|---|---|
-| `program-status` | medium | Reads `settings.vault_is_live`. Currently reports the program is not deployed |
-| `upgrade-and-oracle` | high | LODZ will hold an upgrade authority and will read external prices |
+| `program-status` | medium | Reads `settings.vault_is_live`. Currently reports the vault is not open |
+| `upgrade-and-oracle` | high | LODZ holds an upgrade authority on mainnet, and will read external prices |
 | `keeper-liveness` | medium | Rebalancing and unwinding depend on a keeper running |
 
 `upgrade-and-oracle` names LODZ's own exposure to the exact technique that took $295M from
 Drift: an upgrade authority plus an external price source are the same two surfaces. This
-is disclosed against the protocol rather than only against its venues.
+is disclosed against the protocol rather than only against its venues. It is no longer a
+future exposure on the first half: the upgrade authority exists, it is
+`4qbbSkZTTm1DKL5h6tbSiGzfkzf8X6viWSBeFUzHHTKp`, and it can replace the deployed program.
 
-`program-status` is computed, not written. While the vault is not deployed the service
-adds a disclosure stating that every projection models what the current catalogue would
-pay and none of it reports realised performance.
+`program-status` is computed, not written. While the vault is not open the service adds a
+disclosure stating that every projection models what the current catalogue would pay and
+none of it reports realised performance.
 
 ### 3.7 `data-integrity` -- signals that look healthy and are not
 

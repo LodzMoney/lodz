@@ -444,8 +444,8 @@ allocation against `tvl_usd`. `tvl_usd` is read only for reporting
 (`seam_service.py:281-282`). No `allocation_notes` entry mentions a capacity cap, and the
 live response carries an empty `allocation_notes` array.
 
-This gate has no effect while `deployed_btc` is 0.0 across the catalogue and the vault
-program is not deployed, since no capital is routed. It must be enforced **before** the
+This gate has no effect while `deployed_btc` is 0.0 across the catalogue and the vault is
+not open, since no capital is routed. It must be enforced **before** the
 first deposit. The check belongs in `apply_allocation`: convert the effective
 `allocation_bps` into a USD figure against total deposits, compare against
 `0.10 * seam.tvl_usd`, and reduce the weight with an `allocation_notes` entry stating the

@@ -146,7 +146,7 @@ One further rule is specified and **not yet enforced in code**: no allocation ma
 10 percent of a seam's TVL, because our own capital moving a pool means the quoted rate
 is not the realised rate. The router currently applies its policy weights and
 redistributes the share of any seam a gate rejected; it does not yet compare an
-allocation against venue TVL. The check is inert today because nothing is deployed and
+allocation against venue TVL. The check is inert today because deposits are closed and
 no capital is routed, and it has to land before the first deposit. It is listed here
 rather than omitted, because a specification that reads as enforced when it is not is
 worse than one that names the gap. See `docs/seam-spec.md` section 5.6.
@@ -202,9 +202,10 @@ npm i -g @lodz/cli
 LODZ_API_URL=https://api.lodz.money lodz assay --btc 1.5
 ```
 
-`deposit` and `redeem` build and describe a request but do not sign or submit, because
-this program is not deployed to mainnet. Everything that reads -- `assay`, `seams`,
-`queue` -- works against the live API today. See
+`deposit` and `redeem` build and describe a request but do not sign or submit. The program
+is on mainnet; deposits are not open on it. Being on chain and being open are two
+different states, and only the first of them has happened. Everything that reads --
+`assay`, `seams`, `queue` -- works against the live API today. See
 [lodz-sdk](https://github.com/LodzMoney/lodz-sdk).
 
 - `adit` is the deposit entry point.
@@ -231,24 +232,34 @@ redemption cycle. No network is contacted.
 
 ## Status
 
-The program builds and the local test suite passes. It is not deployed to mainnet, has
-not been audited, and the redemption queue has not been exercised under load.
-
-It is deployed to devnet, and a full deposit into yield accrual into redemption cycle has
-been run against it there. The first of those runs stranded a position behind a PDA seed
-collision that reading the source had not caught, which is the argument for running a
-cycle rather than trusting one.
+The program is deployed to Solana mainnet.
 
 ```
 Program      F9XmBYVEyEwFyHAdMJs6uBvyRag3AFhQ6YMZvqm13SLW
 ProgramData  5YFbRm3fvhYEk7L9LycpW62ZtoPCFbyxqSd5aBTeWUnv
-Cluster      devnet
+Cluster      mainnet-beta
+Owner        BPFLoaderUpgradeable — upgradeable
+Authority    4qbbSkZTTm1DKL5h6tbSiGzfkzf8X6viWSBeFUzHHTKp
+Data length  655,360 bytes
+Deployed     2026-08-17, slot 439811367
+Signature    2SEFAvvvbZW1SgXjSjxbnHimqecBYDf4yYFcQ8iruruytFWcVcxwt762Vnmt9PBMEBt5A98HSzH6tAvF42UJ4yqV
 ```
 
-[View on Solana Explorer](https://explorer.solana.com/address/F9XmBYVEyEwFyHAdMJs6uBvyRag3AFhQ6YMZvqm13SLW?cluster=devnet)
-— the cluster parameter matters. On mainnet this address holds nothing, because nothing
-has been sent to mainnet. `docs/architecture.md` section 6.1 records what was deployed and
-when; `docs/security.md` records what the cycle caught.
+[View on Solana Explorer](https://explorer.solana.com/address/F9XmBYVEyEwFyHAdMJs6uBvyRag3AFhQ6YMZvqm13SLW)
+
+Being on chain and being open are two different states. Deposits are not open, no third
+party has audited the program, and the redemption queue has not been exercised under load.
+The deposit into yield accrual into redemption cycle has not been run on mainnet.
+
+The same id is also live on
+[devnet](https://explorer.solana.com/address/F9XmBYVEyEwFyHAdMJs6uBvyRag3AFhQ6YMZvqm13SLW?cluster=devnet),
+and it was not removed when mainnet was deployed — the cluster parameter is what separates
+the two reads. That is where the full cycle was run. The first of those runs stranded a
+position behind a PDA seed collision that reading the source had not caught, which is the
+argument for running a cycle rather than trusting one.
+
+`docs/architecture.md` section 6.1 records what is deployed on each cluster and when;
+`docs/security.md` records what the devnet cycle caught.
 
 Principal is recovered one-for-one through the redemption queue. The queue can be
 delayed. Nothing here removes custody risk, bridge risk, smart contract risk or the
