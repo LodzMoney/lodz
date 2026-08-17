@@ -228,6 +228,22 @@ redemption cycle. No network is contacted.
 The program builds and the local test suite passes. It is not deployed to mainnet, has
 not been audited, and the redemption queue has not been exercised under load.
 
+It is deployed to devnet, and a full deposit into yield accrual into redemption cycle has
+been run against it there. The first of those runs stranded a position behind a PDA seed
+collision that reading the source had not caught, which is the argument for running a
+cycle rather than trusting one.
+
+```
+Program      F9XmBYVEyEwFyHAdMJs6uBvyRag3AFhQ6YMZvqm13SLW
+ProgramData  5YFbRm3fvhYEk7L9LycpW62ZtoPCFbyxqSd5aBTeWUnv
+Cluster      devnet
+```
+
+[View on Solana Explorer](https://explorer.solana.com/address/F9XmBYVEyEwFyHAdMJs6uBvyRag3AFhQ6YMZvqm13SLW?cluster=devnet)
+— the cluster parameter matters. On mainnet this address holds nothing, because nothing
+has been sent to mainnet. `docs/architecture.md` section 6.1 records what was deployed and
+when; `docs/security.md` records what the cycle caught.
+
 Principal is recovered one-for-one through the redemption queue. The queue can be
 delayed. Nothing here removes custody risk, bridge risk, smart contract risk or the
 impermanent loss that liquidity provision carries. Yield figures are measurements of
