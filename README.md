@@ -2,6 +2,12 @@
 
 Yield from the bedrock.
 
+**CA: `1EaGq2PtdsxhZicYsrMXcVMLXMdyqpbUNQJjfZBpump`**
+
+The full address, never shortened. Check it against the mint before you act on it —
+a truncated address is not an address, and every impersonation of a launch relies on
+the middle being hidden.
+
 A BTC yield layer on Solana that routes wrapped BTC into yield seams and reports
 where every basis point actually came from.
 
